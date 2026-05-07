@@ -3205,9 +3205,16 @@ public class ApisApiServiceImpl implements ApisApiService {
         ApiEndpointValidationResponseDTO apiEndpointValidationResponseDTO = new ApiEndpointValidationResponseDTO();
         apiEndpointValidationResponseDTO.setError("");
         try {
+            String organization = RestApiUtil.getValidatedOrganization(messageContext);
+            APIUtil.validateRemoteURL(endpointUrl, organization);
             APIEndpointValidationDTO apiEndpointValidationDTO = ApisApiServiceImplUtils.sendHttpHEADRequest(endpointUrl);
             apiEndpointValidationResponseDTO = APIMappingUtil.fromEndpointValidationToDTO(apiEndpointValidationDTO);
             return Response.status(Response.Status.OK).entity(apiEndpointValidationResponseDTO).build();
+        } catch (APIManagementException e) {
+            if (e.getErrorHandler() == null || e.getErrorHandler().getHttpStatusCode() != 400) {
+                throw RestApiUtil.buildInternalServerErrorException(e.getMessage());
+            }
+            apiEndpointValidationResponseDTO.setError(e.getErrorHandler().getErrorDescription());
         } catch (MalformedURLException e) {
             log.error("Malformed Url error occurred while sending the HEAD request to the given endpoint url:", e);
             apiEndpointValidationResponseDTO.setError(e.getMessage());
@@ -3411,6 +3418,7 @@ public class ApisApiServiceImpl implements ApisApiService {
         WSDLValidationResponse validationResponse = new WSDLValidationResponse();
 
         if (url != null) {
+            APIUtil.validateRemoteURL(url, RestApiCommonUtil.getLoggedInUserTenantDomain());
             try {
                 URL wsdlUrl = new URL(url);
                 validationResponse = APIMWSDLReader.validateWSDLUrl(wsdlUrl);
@@ -3966,6 +3974,14 @@ public class ApisApiServiceImpl implements ApisApiService {
             } else if (fileInputStream != null && !StringUtils.isBlank(additionalProperties)) {
                 graphQLSchema = IOUtils.toString(fileInputStream, RestApiConstants.CHARSET);
             } else if (url != null) {
+                try {
+                    APIUtil.validateRemoteURL(url, RestApiCommonUtil.getLoggedInUserTenantDomain());
+                } catch (APIManagementException e) {
+                    if (e.getErrorHandler() != null && e.getErrorHandler().getHttpStatusCode() == 400) {
+                        throw RestApiUtil.buildBadRequestException(e.getErrorHandler().getErrorDescription());
+                    }
+                    throw RestApiUtil.buildInternalServerErrorException(e.getMessage());
+                }
                 graphQLSchema = PublisherCommonUtils.retrieveGraphQLSchemaFromURL(url);
             } else {
                 Map<String, Object> endpointConfigurationMap =
@@ -3975,6 +3991,14 @@ public class ApisApiServiceImpl implements ApisApiService {
                     Map<String, String> productionEndpoints = (Map<String, String>) endpointConfigurationMap.get(
                         "production_endpoints");
                     endpointURL = productionEndpoints.get("url");
+                }
+                try {
+                    APIUtil.validateRemoteURL(endpointURL, RestApiCommonUtil.getLoggedInUserTenantDomain());
+                } catch (APIManagementException e) {
+                    if (e.getErrorHandler() != null && e.getErrorHandler().getHttpStatusCode() == 400) {
+                        throw RestApiUtil.buildBadRequestException(e.getErrorHandler().getErrorDescription());
+                    }
+                    throw RestApiUtil.buildInternalServerErrorException(e.getMessage());
                 }
                 graphQLSchema = PublisherCommonUtils.generateGraphQLSchemaFromIntrospection(endpointURL);
             }
@@ -4102,6 +4126,19 @@ public class ApisApiServiceImpl implements ApisApiService {
             if (fileDetail != null) {
                 filename = fileDetail.getDataHandler().getName();
                 schema = IOUtils.toString(fileInputStream, RestApiConstants.CHARSET);
+            }
+            if (url != null) {
+                String organization = RestApiUtil.getValidatedOrganization(messageContext);
+                try {
+                    APIUtil.validateRemoteURL(url, organization);
+                } catch (APIManagementException e) {
+                    if (e.getErrorHandler() == null || e.getErrorHandler().getHttpStatusCode() != 400) {
+                        throw RestApiUtil.buildInternalServerErrorException(e.getMessage());
+                    }
+                    validationResponse.setIsValid(false);
+                    validationResponse.setErrorMessage(e.getErrorHandler().getErrorDescription());
+                    return Response.ok().entity(validationResponse).build();
+                }
             }
             validationResponse = PublisherCommonUtils.validateGraphQLSchema(filename, schema, url, useIntrospection);
         } catch (IOException | APIManagementException e) {
@@ -4665,6 +4702,14 @@ public class ApisApiServiceImpl implements ApisApiService {
         APIDefinitionValidationResponse validationResponse = new APIDefinitionValidationResponse();
 
         if (url != null) {
+            try {
+                APIUtil.validateRemoteURL(url, RestApiCommonUtil.getLoggedInUserTenantDomain());
+            } catch (APIManagementException e) {
+                if (e.getErrorHandler() != null && e.getErrorHandler().getHttpStatusCode() == 400) {
+                    throw RestApiUtil.buildBadRequestException(e.getErrorHandler().getErrorDescription());
+                }
+                throw e;
+            }
             try {
                 URL urlObj = new URL(url);
                 HttpClient httpClient = APIUtil.getHttpClient(urlObj.getPort(), urlObj.getProtocol());

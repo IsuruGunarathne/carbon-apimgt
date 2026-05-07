@@ -12456,4 +12456,167 @@ public final class APIUtil {
         }
         return hasRestrictedPrefix;
     }
+
+    /**
+     * Validates an outbound URL for SSRF risks against three layers of control:
+     * the platform mode/exceptions check, optional private network access block, and tenant host allowlist.
+     * Throws {@link APIManagementException} with {@link ExceptionCodes#UNTRUSTED_URL} if any check fails.
+     *
+     * @param url          URL to validate; may be null or blank
+     * @param organization tenant organization identifier used to load tenant-level config
+     * @throws APIManagementException if the URL is malformed or fails a security check
+     */
+    public static void validateRemoteURL(String url, String organization) throws APIManagementException {
+        if (StringUtils.isBlank(url)) {
+            return;
+        }
+        String host;
+        try {
+            host = new URL(url).getHost();
+            if (StringUtils.isBlank(host)) {
+                throw new APIManagementException("Could not extract a valid host from the provided URL: " + url,
+                        ExceptionCodes.MALFORMED_URL);
+            }
+        } catch (MalformedURLException e) {
+            throw new APIManagementException("The provided URL is malformed: " + url, ExceptionCodes.MALFORMED_URL);
+        }
+
+        APIManagerConfiguration config = ServiceReferenceHolder.getInstance()
+                .getAPIManagerConfigurationService().getAPIManagerConfiguration();
+
+        // Steps 1 & 2: Platform-level checks — only when platform config is enabled
+        String enabled = config.getFirstProperty(APIConstants.OutboundRequestSecurity.ENABLED);
+        if (Boolean.parseBoolean(enabled)) {
+            // Step 1: Platform mode check — no DNS resolution
+            // allow_all (default): exceptions act as a denylist — block hosts matching any exception pattern
+            // deny_all: exceptions act as an allowlist — block hosts not matching any exception pattern
+            String mode = config.getFirstProperty(APIConstants.OutboundRequestSecurity.MODE);
+            if (StringUtils.isBlank(mode)) {
+                mode = APIConstants.OutboundRequestSecurity.MODE_ALLOW_ALL;
+            } else if (!APIConstants.OutboundRequestSecurity.MODE_ALLOW_ALL.equalsIgnoreCase(mode)
+                    && !APIConstants.OutboundRequestSecurity.MODE_DENY_ALL.equalsIgnoreCase(mode)) {
+                APIManagementException ex = new APIManagementException("Internal server error. Please contact the system administrator.",
+                        ExceptionCodes.from(ExceptionCodes.INTERNAL_ERROR_WITH_SPECIFIC_MESSAGE, "Internal server error. Please contact the system administrator."));
+                log.error("Platform outbound request security misconfiguration: mode='" + mode
+                        + "' is not a valid value (expected 'allow_all' or 'deny_all').", ex);
+                throw ex;
+            }
+
+            List<String> exceptions = config.getProperty(APIConstants.OutboundRequestSecurity.EXCEPTIONS);
+            boolean isDenyAll = APIConstants.OutboundRequestSecurity.MODE_DENY_ALL.equalsIgnoreCase(mode);
+
+            if (isDenyAll) {
+                boolean matched = false;
+                if (exceptions != null) {
+                    for (String pattern : exceptions) {
+                        if (StringUtils.isBlank(pattern)) {
+                            continue;
+                        }
+                        if (host.matches(toWildcardRegex(pattern))) {
+                            matched = true;
+                            break;
+                        }
+                    }
+                }
+                if (!matched) {
+                    throw buildURLBlockedException(host);
+                }
+            } else {
+                // allow_all mode: exceptions are a denylist
+                if (exceptions != null) {
+                    for (String pattern : exceptions) {
+                        if (StringUtils.isBlank(pattern)) {
+                            continue;
+                        }
+                        if (host.matches(toWildcardRegex(pattern))) {
+                            throw buildURLBlockedException(host);
+                        }
+                    }
+                }
+            }
+
+            // Step 2: Private network access block — resolves host and checks against reserved address ranges
+            String blockPrivateNetworkAccess = config.getFirstProperty(
+                    APIConstants.OutboundRequestSecurity.BLOCK_PRIVATE_NETWORK_ACCESS);
+            if (Boolean.parseBoolean(blockPrivateNetworkAccess)) {
+                try {
+                    InetAddress address = InetAddress.getByName(host);
+                    if (address.isLoopbackAddress()
+                            || address.isLinkLocalAddress()
+                            || address.isSiteLocalAddress()
+                            || address.isAnyLocalAddress()
+                            || address.isMulticastAddress()) {
+                        throw buildURLBlockedException(host);
+                    }
+                } catch (UnknownHostException e) {
+                    throw buildURLBlockedException(host);
+                }
+            }
+        }
+
+        // Step 3: Tenant host allowlist — independent of platform config, enforced only when explicitly enabled by the tenant admin
+        JSONObject tenantConfig = getTenantConfig(organization);
+        if (tenantConfig != null
+                && tenantConfig.containsKey(APIConstants.OutboundRequestSecurity.TENANT_CONFIG_KEY)) {
+            JSONObject outboundRequestSecurity = (JSONObject) tenantConfig.get(
+                    APIConstants.OutboundRequestSecurity.TENANT_CONFIG_KEY);
+            Object enableAllowlistObj = outboundRequestSecurity.get(
+                    APIConstants.OutboundRequestSecurity.ENABLE_HOST_ALLOWLIST);
+            boolean enableHostAllowlist = enableAllowlistObj != null
+                    && Boolean.parseBoolean(enableAllowlistObj.toString());
+            if (enableHostAllowlist) {
+                JSONArray allowlistPatterns = (JSONArray) outboundRequestSecurity.get(
+                        APIConstants.OutboundRequestSecurity.HOST_ALLOWLIST_PATTERNS);
+                if (allowlistPatterns == null || allowlistPatterns.isEmpty()) {
+                    throw buildURLBlockedException(host);
+                }
+                boolean matched = false;
+                for (Object patternObj : allowlistPatterns) {
+                    if (patternObj == null) {
+                        continue;
+                    }
+                    String pattern = patternObj.toString();
+                    if (StringUtils.isBlank(pattern)) {
+                        continue;
+                    }
+                    if (host.matches(toWildcardRegex(pattern))) {
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched) {
+                    throw buildURLBlockedException(host);
+                }
+            }
+        }
+    }
+
+    /**
+     * Creates an APIManagementException for a URL blocked by the outbound request
+     * security policy and logs the blocked host with a full stack trace for audit and debugging.
+     *
+     * @param host resolved hostname that was rejected by outbound request validation
+     * @return APIManagementException representing a blocked outbound request
+     */
+    private static APIManagementException buildURLBlockedException(String host) {
+        APIManagementException ex = new APIManagementException("Outbound request blocked by outbound request security policy.",
+                ExceptionCodes.UNTRUSTED_URL);
+        log.error("Outbound request to host '" + host + "' blocked by outbound request security policy.", ex);
+        return ex;
+    }
+
+    /**
+     * Converts a simple wildcard host pattern into a safe Java regex.
+     * Uses Pattern.quote() to safely escape all literal parts so that users can
+     * write plain host patterns such as *.wso2.com or 169.254.* without needing
+     * to know regex syntax. Only '*' is treated as a wildcard.
+     *
+     * @param pattern wildcard host pattern (e.g. *.wso2.com, 169.254.*, *)
+     * @return equivalent anchored regex string
+     */
+    private static String toWildcardRegex(String pattern) {
+        return "^" + Arrays.stream(pattern.trim().split("\\*", -1))
+                .map(Pattern::quote)
+                .collect(Collectors.joining(".*")) + "$";
+    }
 }

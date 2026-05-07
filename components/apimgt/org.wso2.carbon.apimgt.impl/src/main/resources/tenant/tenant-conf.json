@@ -481,5 +481,9 @@
       "Internal/subscriber"
     ]
   },
-  "AllowSubscriptionValidationDisabling": false
+  "AllowSubscriptionValidationDisabling": false,
+  "OutboundRequestSecurity": {
+    "EnableHostAllowlist": false,
+    "HostAllowlistPatterns": ["*"]
+  }
 }

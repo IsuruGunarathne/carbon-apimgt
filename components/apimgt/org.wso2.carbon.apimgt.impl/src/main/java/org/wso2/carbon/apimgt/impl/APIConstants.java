@@ -3997,4 +3997,20 @@ public final class APIConstants {
         public static final String QUEUE_CAPACITY = THREAD_POOL_CONFIG + "QueueCapacity";
     }
 
+    // Constants related to outbound request security (SSRF prevention)
+    public static class OutboundRequestSecurity {
+
+        private static final String CONFIG_PREFIX = "OutboundRequestSecurity.";
+        public static final String ENABLED = CONFIG_PREFIX + "Enabled";
+        public static final String BLOCK_PRIVATE_NETWORK_ACCESS = CONFIG_PREFIX + "BlockPrivateNetworkAccess";
+        public static final String MODE = CONFIG_PREFIX + "Mode";
+        public static final String EXCEPTIONS = CONFIG_PREFIX + "Exception";
+        public static final String MODE_ALLOW_ALL = "allow_all";
+        public static final String MODE_DENY_ALL = "deny_all";
+
+        public static final String TENANT_CONFIG_KEY = "OutboundRequestSecurity";
+        public static final String ENABLE_HOST_ALLOWLIST = "EnableHostAllowlist";
+        public static final String HOST_ALLOWLIST_PATTERNS = "HostAllowlistPatterns";
+    }
+
 }

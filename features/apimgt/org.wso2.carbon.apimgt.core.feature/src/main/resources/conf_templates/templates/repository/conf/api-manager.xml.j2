@@ -2177,4 +2177,17 @@
       <Mediation>
         <EnableSecureXMLProcessing>{{apim.mediation.enable_secure_xml_processing}}</EnableSecureXMLProcessing>
       </Mediation>
+
+      {% if apim.outbound_request_security is defined %}
+      <OutboundRequestSecurity>
+        <Enabled>{{apim.outbound_request_security.enabled | default("false")}}</Enabled>
+        <Mode>{{apim.outbound_request_security.mode | default("allow_all")}}</Mode>
+        <BlockPrivateNetworkAccess>{{apim.outbound_request_security.block_private_network_access | default("false")}}</BlockPrivateNetworkAccess>
+        {% if apim.outbound_request_security.exceptions is defined %}
+        {% for pattern in apim.outbound_request_security.exceptions %}
+        <Exception>{{pattern}}</Exception>
+        {% endfor %}
+        {% endif %}
+      </OutboundRequestSecurity>
+      {% endif %}
 </APIManager>

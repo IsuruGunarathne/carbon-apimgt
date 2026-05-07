@@ -1355,6 +1355,37 @@
       "examples": [
         true, false
       ]
+    },
+    "OutboundRequestSecurity": {
+      "$id": "#/properties/OutboundRequestSecurity",
+      "type": "object",
+      "title": "OutboundRequestSecurity schema",
+      "description": "Tenant-level controls for outbound URL validation (SSRF prevention).",
+      "default": {},
+      "properties": {
+        "EnableHostAllowlist": {
+          "$id": "#/properties/OutboundRequestSecurity/properties/EnableHostAllowlist",
+          "type": "boolean",
+          "title": "EnableHostAllowlist schema",
+          "description": "When true, outbound URLs must match at least one wildcard pattern in HostAllowlistPatterns. Default pattern '*' allows all hosts.",
+          "default": false,
+          "examples": [true, false]
+        },
+        "HostAllowlistPatterns": {
+          "$id": "#/properties/OutboundRequestSecurity/properties/HostAllowlistPatterns",
+          "type": "array",
+          "title": "HostAllowlistPatterns schema",
+          "description": "List of wildcard patterns for approved outbound hostnames. Only enforced when EnableHostAllowlist is true.",
+          "default": ["*"],
+          "items": {
+            "type": "string"
+          },
+          "examples": [
+            ["*.mycompany.com", "trustedpartner.io.*"]
+          ]
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": true

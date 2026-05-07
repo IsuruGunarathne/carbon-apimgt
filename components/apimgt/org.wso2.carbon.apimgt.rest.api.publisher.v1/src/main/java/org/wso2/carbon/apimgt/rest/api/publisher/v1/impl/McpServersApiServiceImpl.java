@@ -2556,10 +2556,17 @@ public class McpServersApiServiceImpl implements McpServersApiService {
         ApiEndpointValidationResponseDTO apiEndpointValidationResponseDTO = new ApiEndpointValidationResponseDTO();
         apiEndpointValidationResponseDTO.setError("");
         try {
+            String organization = RestApiUtil.getValidatedOrganization(messageContext);
+            APIUtil.validateRemoteURL(endpointUrl, organization);
             APIEndpointValidationDTO apiEndpointValidationDTO =
                     ApisApiServiceImplUtils.sendHttpHEADRequest(endpointUrl);
             apiEndpointValidationResponseDTO = APIMappingUtil.fromEndpointValidationToDTO(apiEndpointValidationDTO);
             return Response.status(Response.Status.OK).entity(apiEndpointValidationResponseDTO).build();
+        } catch (APIManagementException e) {
+            if (e.getErrorHandler() == null || e.getErrorHandler().getHttpStatusCode() != 400) {
+                throw e;
+            }
+            apiEndpointValidationResponseDTO.setError(e.getErrorHandler().getErrorDescription());
         } catch (MalformedURLException e) {
             log.error("Malformed Url error occurred while sending the HEAD request to the given endpoint url:", e);
             apiEndpointValidationResponseDTO.setError(e.getMessage());
@@ -2631,6 +2638,7 @@ public class McpServersApiServiceImpl implements McpServersApiService {
         }
 
         final String organization = RestApiUtil.getValidatedOrganization(messageContext);
+        APIUtil.validateRemoteURL(serverUrl, organization);
         SecurityInfoDTO securityInfo = dto.getSecurityInfo();
         final boolean isSecure = securityInfo != null && Boolean.TRUE.equals(securityInfo.isIsSecure());
 
