@@ -5067,7 +5067,7 @@ public class PublisherCommonUtils {
             final String authHeader = securityInfo != null ? securityInfo.getHeader() : null;
             final String authValue = securityInfo != null ? securityInfo.getValue() : null;
 
-            APIUtil.validateRemoteURL(serverUrl, organization);
+            APIUtil.validateRemoteURL(serverUrl, RestApiCommonUtil.getLoggedInUserTenantDomain());
             MCPInitializerAndToolFetcher fetcher =
                     new MCPInitializerAndToolFetcher(serverUrl, authHeader, authValue, secureRequested);
 

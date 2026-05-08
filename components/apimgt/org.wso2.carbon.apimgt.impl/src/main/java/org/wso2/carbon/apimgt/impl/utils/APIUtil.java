@@ -12463,11 +12463,14 @@ public final class APIUtil {
      * Throws {@link APIManagementException} with {@link ExceptionCodes#UNTRUSTED_URL} if any check fails.
      *
      * @param url          URL to validate; may be null or blank
-     * @param organization tenant organization identifier used to load tenant-level config
+     * @param tenantDomain tenant domain used to load tenant-level config
      * @throws APIManagementException if the URL is malformed or fails a security check
      */
-    public static void validateRemoteURL(String url, String organization) throws APIManagementException {
+    public static void validateRemoteURL(String url, String tenantDomain) throws APIManagementException {
         if (StringUtils.isBlank(url)) {
+            if (log.isDebugEnabled()) {
+                log.debug("URL validation skipped - blank URL provided");
+            }
             return;
         }
         String host;
@@ -12540,13 +12543,21 @@ public final class APIUtil {
                     APIConstants.OutboundRequestSecurity.BLOCK_PRIVATE_NETWORK_ACCESS);
             if (Boolean.parseBoolean(blockPrivateNetworkAccess)) {
                 try {
-                    InetAddress address = InetAddress.getByName(host);
-                    if (address.isLoopbackAddress()
-                            || address.isLinkLocalAddress()
-                            || address.isSiteLocalAddress()
-                            || address.isAnyLocalAddress()
-                            || address.isMulticastAddress()) {
-                        throw buildURLBlockedException(host);
+                    InetAddress[] addresses = InetAddress.getAllByName(host);
+                    for (InetAddress address : addresses) {
+                        if (log.isDebugEnabled()) {
+                            log.debug("Checking private network access for host: " + host
+                                    + ", resolved to: " + address.getHostAddress());
+                        }
+                        if (address.isLoopbackAddress()
+                                || address.isLinkLocalAddress()
+                                || address.isSiteLocalAddress()
+                                || address.isAnyLocalAddress()
+                                || address.isMulticastAddress()) {
+                            log.warn("Blocking private network access attempt to host: " + host
+                                    + " (" + address.getHostAddress() + ")");
+                            throw buildURLBlockedException(host);
+                        }
                     }
                 } catch (UnknownHostException e) {
                     throw buildURLBlockedException(host);
@@ -12555,7 +12566,7 @@ public final class APIUtil {
         }
 
         // Step 3: Tenant host allowlist — independent of platform config, enforced only when explicitly enabled by the tenant admin
-        JSONObject tenantConfig = getTenantConfig(organization);
+        JSONObject tenantConfig = getTenantConfig(tenantDomain);
         if (tenantConfig != null
                 && tenantConfig.containsKey(APIConstants.OutboundRequestSecurity.TENANT_CONFIG_KEY)) {
             JSONObject outboundRequestSecurity = (JSONObject) tenantConfig.get(

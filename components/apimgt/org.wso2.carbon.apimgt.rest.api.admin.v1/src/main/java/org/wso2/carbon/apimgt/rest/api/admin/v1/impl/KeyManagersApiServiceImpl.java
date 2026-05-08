@@ -54,8 +54,7 @@ public class KeyManagersApiServiceImpl implements KeyManagersApiService {
     public Response keyManagersDiscoverPost(String url, String type, MessageContext messageContext)
             throws APIManagementException {
         if (StringUtils.isNotEmpty(url)) {
-            String organization = RestApiUtil.getOrganization(messageContext);
-            APIUtil.validateRemoteURL(url, organization);
+            APIUtil.validateRemoteURL(url, RestApiCommonUtil.getLoggedInUserTenantDomain());
             Gson gson = new GsonBuilder().serializeNulls().create();
             OpenIDConnectDiscoveryClient openIDConnectDiscoveryClient =
                     Feign.builder().client(new ApacheFeignHttpClient(APIUtil.getHttpClient(url)))
@@ -145,7 +144,7 @@ public class KeyManagersApiServiceImpl implements KeyManagersApiService {
                 body.setAllowedOrganizations(allowedOrgs);
             }
         }
-        validateKeyManagerURLs(body, organization);
+        validateKeyManagerURLs(body);
         try {
             KeyManagerConfigurationDTO keyManagerConfigurationDTO =
                     KeyManagerMappingUtil.toKeyManagerConfigurationDTO(organization, body);
@@ -229,7 +228,7 @@ public class KeyManagersApiServiceImpl implements KeyManagersApiService {
         String organization = RestApiUtil.getOrganization(messageContext);
         APIAdmin apiAdmin = new APIAdminImpl();
         try {
-            validateKeyManagerURLs(body, organization);
+            validateKeyManagerURLs(body);
             KeyManagerConfigurationDTO keyManagerConfigurationDTO =
                     KeyManagerMappingUtil.toKeyManagerConfigurationDTO(organization, body);
             KeyManagerPermissionConfigurationDTO keyManagerPermissionConfigurationDTO =
@@ -280,12 +279,11 @@ public class KeyManagersApiServiceImpl implements KeyManagersApiService {
      * the invalid endpoint. Internal server errors and other unexpected failures
      * are propagated unchanged.
      *
-     * @param body         Key Manager configuration containing URLs to validate
-     * @param organization organization identifier used for tenant-level validation
+     * @param body Key Manager configuration containing URLs to validate
      * @throws APIManagementException if URL validation fails or an internal
      *                                outbound request validation error occurs
      */
-    private void validateKeyManagerURLs(KeyManagerDTO body, String organization) throws APIManagementException {
+    private void validateKeyManagerURLs(KeyManagerDTO body) throws APIManagementException {
         Map<String, String> urlFields = new LinkedHashMap<>();
         urlFields.put("well-known endpoint", body.getWellKnownEndpoint());
         urlFields.put("token endpoint", body.getTokenEndpoint());
@@ -298,10 +296,10 @@ public class KeyManagersApiServiceImpl implements KeyManagersApiService {
 
         for (Map.Entry<String, String> entry : urlFields.entrySet()) {
             try {
-                validateKeyManagerURL(entry.getValue(), entry.getKey(), organization);
+                validateKeyManagerURL(entry.getValue(), entry.getKey());
             } catch (APIManagementException e) {
                 if (e.getErrorHandler() != null && e.getErrorHandler().getHttpStatusCode() == 400) {
-                    log.error(e.getMessage(), e);
+                    log.warn(e.getMessage(), e);
                     RestApiUtil.handleBadRequest(e.getMessage());
                 } else {
                     throw e;
@@ -313,10 +311,10 @@ public class KeyManagersApiServiceImpl implements KeyManagersApiService {
                 if (endpoint != null) {
                     try {
                         validateKeyManagerURL(endpoint.getValue(),
-                                "custom endpoint '" + endpoint.getName() + "'", organization);
+                                "custom endpoint '" + endpoint.getName() + "'");
                     } catch (APIManagementException e) {
                         if (e.getErrorHandler() != null && e.getErrorHandler().getHttpStatusCode() == 400) {
-                            log.error(e.getMessage(), e);
+                            log.warn(e.getMessage(), e);
                             RestApiUtil.handleBadRequest(e.getMessage());
                         } else {
                             throw e;
@@ -328,10 +326,10 @@ public class KeyManagersApiServiceImpl implements KeyManagersApiService {
         if (body.getCertificates() != null
                 && KeyManagerCertificatesDTO.TypeEnum.JWKS.equals(body.getCertificates().getType())) {
             try {
-                validateKeyManagerURL(body.getCertificates().getValue(), "JWKS endpoint", organization);
+                validateKeyManagerURL(body.getCertificates().getValue(), "JWKS endpoint");
             } catch (APIManagementException e) {
                 if (e.getErrorHandler() != null && e.getErrorHandler().getHttpStatusCode() == 400) {
-                    log.error(e.getMessage(), e);
+                    log.warn(e.getMessage(), e);
                     RestApiUtil.handleBadRequest(e.getMessage());
                 } else {
                     throw e;
@@ -348,16 +346,15 @@ public class KeyManagersApiServiceImpl implements KeyManagersApiService {
      * contains the untrusted URL. Internal server errors and other non-client
      * validation failures are propagated unchanged.
      *
-     * @param url          Key Manager endpoint URL to validate
-     * @param fieldName    descriptive name of the Key Manager URL field being validated
-     * @param organization organization identifier used for tenant-level validation
+     * @param url       Key Manager endpoint URL to validate
+     * @param fieldName descriptive name of the Key Manager URL field being validated
      * @throws APIManagementException if the URL is malformed, untrusted, or
      *                                outbound request validation fails
      */
-    private void validateKeyManagerURL(String url, String fieldName, String organization)
+    private void validateKeyManagerURL(String url, String fieldName)
             throws APIManagementException {
         try {
-            APIUtil.validateRemoteURL(url, organization);
+            APIUtil.validateRemoteURL(url, RestApiCommonUtil.getLoggedInUserTenantDomain());
         } catch (APIManagementException e) {
             if (e.getErrorHandler() != null && e.getErrorHandler().getHttpStatusCode() == 400) {
                 throw new APIManagementException(

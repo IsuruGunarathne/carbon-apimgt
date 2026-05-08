@@ -3205,8 +3205,7 @@ public class ApisApiServiceImpl implements ApisApiService {
         ApiEndpointValidationResponseDTO apiEndpointValidationResponseDTO = new ApiEndpointValidationResponseDTO();
         apiEndpointValidationResponseDTO.setError("");
         try {
-            String organization = RestApiUtil.getValidatedOrganization(messageContext);
-            APIUtil.validateRemoteURL(endpointUrl, organization);
+            APIUtil.validateRemoteURL(endpointUrl, RestApiCommonUtil.getLoggedInUserTenantDomain());
             APIEndpointValidationDTO apiEndpointValidationDTO = ApisApiServiceImplUtils.sendHttpHEADRequest(endpointUrl);
             apiEndpointValidationResponseDTO = APIMappingUtil.fromEndpointValidationToDTO(apiEndpointValidationDTO);
             return Response.status(Response.Status.OK).entity(apiEndpointValidationResponseDTO).build();
@@ -4128,9 +4127,8 @@ public class ApisApiServiceImpl implements ApisApiService {
                 schema = IOUtils.toString(fileInputStream, RestApiConstants.CHARSET);
             }
             if (url != null) {
-                String organization = RestApiUtil.getValidatedOrganization(messageContext);
                 try {
-                    APIUtil.validateRemoteURL(url, organization);
+                    APIUtil.validateRemoteURL(url, RestApiCommonUtil.getLoggedInUserTenantDomain());
                 } catch (APIManagementException e) {
                     if (e.getErrorHandler() == null || e.getErrorHandler().getHttpStatusCode() != 400) {
                         throw RestApiUtil.buildInternalServerErrorException(e.getMessage());

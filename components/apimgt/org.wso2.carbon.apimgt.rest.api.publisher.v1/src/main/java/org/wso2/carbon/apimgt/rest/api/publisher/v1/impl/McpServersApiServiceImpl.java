@@ -2556,8 +2556,7 @@ public class McpServersApiServiceImpl implements McpServersApiService {
         ApiEndpointValidationResponseDTO apiEndpointValidationResponseDTO = new ApiEndpointValidationResponseDTO();
         apiEndpointValidationResponseDTO.setError("");
         try {
-            String organization = RestApiUtil.getValidatedOrganization(messageContext);
-            APIUtil.validateRemoteURL(endpointUrl, organization);
+            APIUtil.validateRemoteURL(endpointUrl, RestApiCommonUtil.getLoggedInUserTenantDomain());
             APIEndpointValidationDTO apiEndpointValidationDTO =
                     ApisApiServiceImplUtils.sendHttpHEADRequest(endpointUrl);
             apiEndpointValidationResponseDTO = APIMappingUtil.fromEndpointValidationToDTO(apiEndpointValidationDTO);
@@ -2638,7 +2637,7 @@ public class McpServersApiServiceImpl implements McpServersApiService {
         }
 
         final String organization = RestApiUtil.getValidatedOrganization(messageContext);
-        APIUtil.validateRemoteURL(serverUrl, organization);
+        APIUtil.validateRemoteURL(serverUrl, RestApiCommonUtil.getLoggedInUserTenantDomain());
         SecurityInfoDTO securityInfo = dto.getSecurityInfo();
         final boolean isSecure = securityInfo != null && Boolean.TRUE.equals(securityInfo.isIsSecure());
 
