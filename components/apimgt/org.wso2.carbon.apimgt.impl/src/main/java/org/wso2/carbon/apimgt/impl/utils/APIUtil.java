@@ -283,6 +283,7 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
 import java.net.Inet4Address;
+import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.MalformedURLException;
 import java.net.NetworkInterface;
@@ -12549,11 +12550,7 @@ public final class APIUtil {
                             log.debug("Checking private network access for host: " + host
                                     + ", resolved to: " + address.getHostAddress());
                         }
-                        if (address.isLoopbackAddress()
-                                || address.isLinkLocalAddress()
-                                || address.isSiteLocalAddress()
-                                || address.isAnyLocalAddress()
-                                || address.isMulticastAddress()) {
+                        if (isPrivateNetworkAddress(address)) {
                             log.warn("Blocking private network access attempt to host: " + host
                                     + " (" + address.getHostAddress() + ")");
                             throw buildURLBlockedException(host);
@@ -12603,12 +12600,37 @@ public final class APIUtil {
     }
 
     /**
-     * Creates an APIManagementException for a URL blocked by the outbound request
-     * security policy and logs the blocked host with a full stack trace for audit and debugging.
+     * Checks whether the given IP address belongs to a private, local, or otherwise
+     * non-public network range that should be blocked for outbound requests.
      *
-     * @param host resolved hostname that was rejected by outbound request validation
-     * @return APIManagementException representing a blocked outbound request
+     * This includes:
+     * <ul>
+     *     <li>Loopback addresses (e.g., 127.0.0.1, ::1)</li>
+     *     <li>Link-local addresses</li>
+     *     <li>Site-local/private addresses</li>
+     *     <li>Wildcard/any-local addresses</li>
+     *     <li>Multicast addresses</li>
+     *     <li>IPv6 Unique Local Addresses (fc00::/7)</li>
+     * </ul>
+     *
+     * @param address The resolved IP address to validate
+     * @return {@code true} if the address belongs to a blocked private or local
+     *         network range, {@code false} otherwise
      */
+    private static boolean isPrivateNetworkAddress(InetAddress address) {
+        if (address instanceof Inet6Address) {
+            byte[] bytes = address.getAddress();
+            if ((bytes[0] & 0xFE) == 0xFC) {
+                return true; // IPv6 Unique Local Address (fc00::/7)
+            }
+        }
+        return address.isLoopbackAddress()
+                || address.isLinkLocalAddress()
+                || address.isSiteLocalAddress()
+                || address.isAnyLocalAddress()
+                || address.isMulticastAddress();
+    }
+
     private static APIManagementException buildURLBlockedException(String host) {
         APIManagementException ex = new APIManagementException("Outbound request blocked by outbound request security policy.",
                 ExceptionCodes.UNTRUSTED_URL);

@@ -340,19 +340,23 @@ public class KeyManagersApiServiceImpl implements KeyManagersApiService {
 
     /**
      * Validates a Key Manager endpoint URL against outbound request security policies.
-     * If the URL is rejected by outbound request validation with a client-side
-     * validation error (HTTP 400), the original exception is wrapped with a
-     * field-specific message so the caller can identify which Key Manager endpoint
-     * contains the untrusted URL. Internal server errors and other non-client
-     * validation failures are propagated unchanged.
+     * Null or blank values are silently skipped, allowing optional endpoint fields to
+     * remain unset without triggering a validation error. If the URL is rejected by
+     * outbound request validation with a client-side validation error (HTTP 400), the
+     * original exception is wrapped with a field-specific message so the caller can
+     * identify which Key Manager endpoint contains the untrusted URL. Internal server
+     * errors and other non-client validation failures are propagated unchanged.
      *
-     * @param url       Key Manager endpoint URL to validate
+     * @param url       Key Manager endpoint URL to validate; null or blank values are skipped
      * @param fieldName descriptive name of the Key Manager URL field being validated
      * @throws APIManagementException if the URL is malformed, untrusted, or
      *                                outbound request validation fails
      */
     private void validateKeyManagerURL(String url, String fieldName)
             throws APIManagementException {
+        if (StringUtils.isBlank(url)) {
+            return;
+        }
         try {
             APIUtil.validateRemoteURL(url, RestApiCommonUtil.getLoggedInUserTenantDomain());
         } catch (APIManagementException e) {
