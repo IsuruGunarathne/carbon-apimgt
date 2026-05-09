@@ -12474,6 +12474,29 @@ public final class APIUtil {
             }
             return;
         }
+
+        APIManagerConfiguration config = ServiceReferenceHolder.getInstance()
+                .getAPIManagerConfigurationService().getAPIManagerConfiguration();
+        boolean platformEnabled = Boolean.parseBoolean(
+                config.getFirstProperty(APIConstants.OutboundRequestSecurity.ENABLED));
+
+        JSONObject tenantConfig = getTenantConfig(tenantDomain);
+        boolean enableHostAllowlist = false;
+        JSONObject outboundRequestSecurity = null;
+        if (tenantConfig != null
+                && tenantConfig.containsKey(APIConstants.OutboundRequestSecurity.TENANT_CONFIG_KEY)) {
+            outboundRequestSecurity = (JSONObject) tenantConfig.get(
+                    APIConstants.OutboundRequestSecurity.TENANT_CONFIG_KEY);
+            Object enableAllowlistObj = outboundRequestSecurity.get(
+                    APIConstants.OutboundRequestSecurity.ENABLE_HOST_ALLOWLIST);
+            enableHostAllowlist = enableAllowlistObj != null
+                    && Boolean.parseBoolean(enableAllowlistObj.toString());
+        }
+
+        if (!platformEnabled && !enableHostAllowlist) {
+            return;
+        }
+
         String host;
         try {
             host = new URL(url).getHost();
@@ -12485,12 +12508,8 @@ public final class APIUtil {
             throw new APIManagementException("The provided URL is malformed: " + url, ExceptionCodes.MALFORMED_URL);
         }
 
-        APIManagerConfiguration config = ServiceReferenceHolder.getInstance()
-                .getAPIManagerConfigurationService().getAPIManagerConfiguration();
-
         // Steps 1 & 2: Platform-level checks — only when platform config is enabled
-        String enabled = config.getFirstProperty(APIConstants.OutboundRequestSecurity.ENABLED);
-        if (Boolean.parseBoolean(enabled)) {
+        if (platformEnabled) {
             // Step 1: Platform mode check — no DNS resolution
             // allow_all (default): exceptions act as a denylist — block hosts matching any exception pattern
             // deny_all: exceptions act as an allowlist — block hosts not matching any exception pattern
@@ -12563,38 +12582,28 @@ public final class APIUtil {
         }
 
         // Step 3: Tenant host allowlist — independent of platform config, enforced only when explicitly enabled by the tenant admin
-        JSONObject tenantConfig = getTenantConfig(tenantDomain);
-        if (tenantConfig != null
-                && tenantConfig.containsKey(APIConstants.OutboundRequestSecurity.TENANT_CONFIG_KEY)) {
-            JSONObject outboundRequestSecurity = (JSONObject) tenantConfig.get(
-                    APIConstants.OutboundRequestSecurity.TENANT_CONFIG_KEY);
-            Object enableAllowlistObj = outboundRequestSecurity.get(
-                    APIConstants.OutboundRequestSecurity.ENABLE_HOST_ALLOWLIST);
-            boolean enableHostAllowlist = enableAllowlistObj != null
-                    && Boolean.parseBoolean(enableAllowlistObj.toString());
-            if (enableHostAllowlist) {
-                JSONArray allowlistPatterns = (JSONArray) outboundRequestSecurity.get(
-                        APIConstants.OutboundRequestSecurity.HOST_ALLOWLIST_PATTERNS);
-                if (allowlistPatterns == null || allowlistPatterns.isEmpty()) {
-                    throw buildURLBlockedException(host);
+        if (enableHostAllowlist) {
+            JSONArray allowlistPatterns = (JSONArray) outboundRequestSecurity.get(
+                    APIConstants.OutboundRequestSecurity.HOST_ALLOWLIST_PATTERNS);
+            if (allowlistPatterns == null || allowlistPatterns.isEmpty()) {
+                throw buildURLBlockedException(host);
+            }
+            boolean matched = false;
+            for (Object patternObj : allowlistPatterns) {
+                if (patternObj == null) {
+                    continue;
                 }
-                boolean matched = false;
-                for (Object patternObj : allowlistPatterns) {
-                    if (patternObj == null) {
-                        continue;
-                    }
-                    String pattern = patternObj.toString();
-                    if (StringUtils.isBlank(pattern)) {
-                        continue;
-                    }
-                    if (host.matches(toWildcardRegex(pattern))) {
-                        matched = true;
-                        break;
-                    }
+                String pattern = patternObj.toString();
+                if (StringUtils.isBlank(pattern)) {
+                    continue;
                 }
-                if (!matched) {
-                    throw buildURLBlockedException(host);
+                if (host.matches(toWildcardRegex(pattern))) {
+                    matched = true;
+                    break;
                 }
+            }
+            if (!matched) {
+                throw buildURLBlockedException(host);
             }
         }
     }
