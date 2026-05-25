@@ -3501,6 +3501,22 @@ public class ApisApiServiceImpl implements ApisApiService {
             additionalPropertiesAPI.setProvider(username);
             additionalPropertiesAPI.setType(APIDTO.TypeEnum.fromValue(implementationType));
             String organization = RestApiUtil.getValidatedOrganization(messageContext);
+            Object wsdlEndpointConfig = additionalPropertiesAPI.getEndpointConfig();
+            if (wsdlEndpointConfig instanceof Map) {
+                String tenantDomain = RestApiCommonUtil.getLoggedInUserTenantDomain();
+                org.json.JSONObject endpointConfigObj = new org.json.JSONObject((Map) wsdlEndpointConfig);
+                if (!APIConstants.ENDPOINT_TYPE_DEFAULT.equalsIgnoreCase(
+                        endpointConfigObj.optString(APIConstants.API_ENDPOINT_CONFIG_PROTOCOL_TYPE))) {
+                    ArrayList<String> endpoints = new ArrayList<>();
+                    APIUtil.extractURLsFromEndpointConfig(endpointConfigObj, APIConstants.API_DATA_PRODUCTION_ENDPOINTS, endpoints);
+                    APIUtil.extractURLsFromEndpointConfig(endpointConfigObj, APIConstants.API_DATA_SANDBOX_ENDPOINTS, endpoints);
+                    APIUtil.extractURLsFromEndpointConfig(endpointConfigObj, APIConstants.ENDPOINT_PRODUCTION_FAILOVERS, endpoints);
+                    APIUtil.extractURLsFromEndpointConfig(endpointConfigObj, APIConstants.ENDPOINT_SANDBOX_FAILOVERS, endpoints);
+                    for (String endpoint : endpoints) {
+                        APIUtil.validateRemoteURL(endpoint, tenantDomain);
+                    }
+                }
+            }
             API apiToAdd = PublisherCommonUtils
                     .prepareToCreateAPIByDTO(new APIDTOTypeWrapper(additionalPropertiesAPI), RestApiCommonUtil.getLoggedInUserProvider(),
                             username, organization);
@@ -4793,6 +4809,23 @@ public class ApisApiServiceImpl implements ApisApiService {
             websocketTransports.add(APIConstants.WS_PROTOCOL);
             websocketTransports.add(APIConstants.WSS_PROTOCOL);
             apiDTOFromProperties.setTransport(websocketTransports);
+        }
+
+        Object asyncEndpointConfig = apiDTOFromProperties.getEndpointConfig();
+        if (asyncEndpointConfig instanceof Map) {
+            String tenantDomain = RestApiCommonUtil.getLoggedInUserTenantDomain();
+            org.json.JSONObject endpointConfigObj = new org.json.JSONObject((Map) asyncEndpointConfig);
+            if (!APIConstants.ENDPOINT_TYPE_DEFAULT.equalsIgnoreCase(
+                    endpointConfigObj.optString(APIConstants.API_ENDPOINT_CONFIG_PROTOCOL_TYPE))) {
+                ArrayList<String> endpoints = new ArrayList<>();
+                APIUtil.extractURLsFromEndpointConfig(endpointConfigObj, APIConstants.API_DATA_PRODUCTION_ENDPOINTS, endpoints);
+                APIUtil.extractURLsFromEndpointConfig(endpointConfigObj, APIConstants.API_DATA_SANDBOX_ENDPOINTS, endpoints);
+                APIUtil.extractURLsFromEndpointConfig(endpointConfigObj, APIConstants.ENDPOINT_PRODUCTION_FAILOVERS, endpoints);
+                APIUtil.extractURLsFromEndpointConfig(endpointConfigObj, APIConstants.ENDPOINT_SANDBOX_FAILOVERS, endpoints);
+                for (String endpoint : endpoints) {
+                    APIUtil.validateRemoteURL(endpoint, tenantDomain);
+                }
+            }
         }
 
         try {

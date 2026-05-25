@@ -1356,33 +1356,40 @@
         true, false
       ]
     },
-    "OutboundRequestSecurity": {
-      "$id": "#/properties/OutboundRequestSecurity",
+    "NetworkSecurityAccessControl": {
+      "$id": "#/properties/NetworkSecurityAccessControl",
       "type": "object",
-      "title": "OutboundRequestSecurity schema",
-      "description": "Tenant-level controls for outbound URL validation (SSRF prevention).",
+      "title": "NetworkSecurityAccessControl schema",
+      "description": "Tenant-level network security access control (SSRF prevention). Activated when this key is present.",
       "default": {},
       "properties": {
-        "EnableHostAllowlist": {
-          "$id": "#/properties/OutboundRequestSecurity/properties/EnableHostAllowlist",
-          "type": "boolean",
-          "title": "EnableHostAllowlist schema",
-          "description": "When true, outbound URLs must match at least one wildcard pattern in HostAllowlistPatterns. Default pattern '*' allows all hosts.",
-          "default": false,
-          "examples": [true, false]
+        "Mode": {
+          "$id": "#/properties/NetworkSecurityAccessControl/properties/Mode",
+          "type": "string",
+          "title": "Mode schema",
+          "description": "'allow' — only hosts matching the Hosts list are permitted; others are blocked. 'deny' — hosts matching the Hosts list are blocked; others are permitted.",
+          "examples": ["allow", "deny"]
         },
-        "HostAllowlistPatterns": {
-          "$id": "#/properties/OutboundRequestSecurity/properties/HostAllowlistPatterns",
+        "Hosts": {
+          "$id": "#/properties/NetworkSecurityAccessControl/properties/Hosts",
           "type": "array",
-          "title": "HostAllowlistPatterns schema",
-          "description": "List of wildcard patterns for approved outbound hostnames. Only enforced when EnableHostAllowlist is true.",
-          "default": ["*"],
+          "title": "Hosts schema",
+          "description": "Wildcard host patterns. In 'allow' mode these are permitted and bypass BlockPrivateNetworkAccess. In 'deny' mode these are blocked.",
+          "default": [],
           "items": {
             "type": "string"
           },
           "examples": [
-            ["*.mycompany.com", "trustedpartner.io.*"]
+            ["*.mycompany.com", "trustedpartner.io"]
           ]
+        },
+        "BlockPrivateNetworkAccess": {
+          "$id": "#/properties/NetworkSecurityAccessControl/properties/BlockPrivateNetworkAccess",
+          "type": "boolean",
+          "title": "BlockPrivateNetworkAccess schema",
+          "description": "When true, blocks outbound requests resolving to private/reserved IP ranges. Hosts matched by the Hosts list are exempt.",
+          "default": false,
+          "examples": [true, false]
         }
       },
       "additionalProperties": false

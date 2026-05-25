@@ -12459,13 +12459,12 @@ public final class APIUtil {
     }
 
     /**
-     * Validates an outbound URL for SSRF risks against three layers of control:
-     * the platform mode/exceptions check, optional private network access block, and tenant host allowlist.
-     * Throws {@link APIManagementException} with {@link ExceptionCodes#UNTRUSTED_URL} if any check fails.
+     * Validates an outbound URL against platform and tenant network security access control policies.
+     * Blank URLs are silently skipped. Malformed URLs throw with {@code ExceptionCodes.MALFORMED_URL}.
      *
-     * @param url          URL to validate; may be null or blank
+     * @param url          URL to validate; null or blank values are silently skipped
      * @param tenantDomain tenant domain used to load tenant-level config
-     * @throws APIManagementException if the URL is malformed or fails a security check
+     * @throws APIManagementException if the URL is malformed or blocked by an access control policy
      */
     public static void validateRemoteURL(String url, String tenantDomain) throws APIManagementException {
         if (StringUtils.isBlank(url)) {
@@ -12478,22 +12477,17 @@ public final class APIUtil {
         APIManagerConfiguration config = ServiceReferenceHolder.getInstance()
                 .getAPIManagerConfigurationService().getAPIManagerConfiguration();
         boolean platformEnabled = Boolean.parseBoolean(
-                config.getFirstProperty(APIConstants.OutboundRequestSecurity.ENABLED));
+                config.getFirstProperty(APIConstants.NetworkSecurityAccessControl.ENABLED));
 
         JSONObject tenantConfig = getTenantConfig(tenantDomain);
-        boolean enableHostAllowlist = false;
-        JSONObject outboundRequestSecurity = null;
-        if (tenantConfig != null
-                && tenantConfig.containsKey(APIConstants.OutboundRequestSecurity.TENANT_CONFIG_KEY)) {
-            outboundRequestSecurity = (JSONObject) tenantConfig.get(
-                    APIConstants.OutboundRequestSecurity.TENANT_CONFIG_KEY);
-            Object enableAllowlistObj = outboundRequestSecurity.get(
-                    APIConstants.OutboundRequestSecurity.ENABLE_HOST_ALLOWLIST);
-            enableHostAllowlist = enableAllowlistObj != null
-                    && Boolean.parseBoolean(enableAllowlistObj.toString());
+        JSONObject tenantAccessControl = null;
+        if (tenantConfig != null) {
+            tenantAccessControl = (JSONObject) tenantConfig.get(
+                    APIConstants.NetworkSecurityAccessControl.TENANT_CONFIG_KEY);
         }
+        boolean tenantEnabled = tenantAccessControl != null;
 
-        if (!platformEnabled && !enableHostAllowlist) {
+        if (!platformEnabled && !tenantEnabled) {
             return;
         }
 
@@ -12505,107 +12499,180 @@ public final class APIUtil {
                         ExceptionCodes.MALFORMED_URL);
             }
         } catch (MalformedURLException e) {
-            throw new APIManagementException("The provided URL is malformed: " + url, ExceptionCodes.MALFORMED_URL);
+            throw new APIManagementException("The provided URL is malformed: " + url,
+                    ExceptionCodes.MALFORMED_URL);
         }
 
-        // Steps 1 & 2: Platform-level checks — only when platform config is enabled
         if (platformEnabled) {
-            // Step 1: Platform mode check — no DNS resolution
-            // allow_all (default): exceptions act as a denylist — block hosts matching any exception pattern
-            // deny_all: exceptions act as an allowlist — block hosts not matching any exception pattern
-            String mode = config.getFirstProperty(APIConstants.OutboundRequestSecurity.MODE);
-            if (StringUtils.isBlank(mode)) {
-                mode = APIConstants.OutboundRequestSecurity.MODE_ALLOW_ALL;
-            } else if (!APIConstants.OutboundRequestSecurity.MODE_ALLOW_ALL.equalsIgnoreCase(mode)
-                    && !APIConstants.OutboundRequestSecurity.MODE_DENY_ALL.equalsIgnoreCase(mode)) {
-                APIManagementException ex = new APIManagementException("Internal server error. Please contact the system administrator.",
-                        ExceptionCodes.from(ExceptionCodes.INTERNAL_ERROR_WITH_SPECIFIC_MESSAGE, "Internal server error. Please contact the system administrator."));
-                log.error("Platform outbound request security misconfiguration: mode='" + mode
-                        + "' is not a valid value (expected 'allow_all' or 'deny_all').", ex);
-                throw ex;
-            }
+            String mode = config.getFirstProperty(APIConstants.NetworkSecurityAccessControl.MODE);
+            List<String> hosts = config.getProperty(APIConstants.NetworkSecurityAccessControl.HOSTS);
+            boolean blockPrivate = Boolean.parseBoolean(
+                    config.getFirstProperty(APIConstants.NetworkSecurityAccessControl.BLOCK_PRIVATE_NETWORK_ACCESS));
+            applyAccessControlPolicy(host, mode, hosts, blockPrivate);
+        }
 
-            List<String> exceptions = config.getProperty(APIConstants.OutboundRequestSecurity.EXCEPTIONS);
-            boolean isDenyAll = APIConstants.OutboundRequestSecurity.MODE_DENY_ALL.equalsIgnoreCase(mode);
-
-            if (isDenyAll) {
-                boolean matched = false;
-                if (exceptions != null) {
-                    for (String pattern : exceptions) {
-                        if (StringUtils.isBlank(pattern)) {
-                            continue;
-                        }
-                        if (host.matches(toWildcardRegex(pattern))) {
-                            matched = true;
-                            break;
-                        }
-                    }
+        if (tenantEnabled) {
+            String tenantMode = (String) tenantAccessControl.get(
+                    APIConstants.NetworkSecurityAccessControl.TENANT_MODE);
+            boolean tenantBlockPrivate = Boolean.TRUE.equals(
+                    tenantAccessControl.get(
+                            APIConstants.NetworkSecurityAccessControl.TENANT_BLOCK_PRIVATE_NETWORK_ACCESS));
+            JSONArray tenantHostsArray = (JSONArray) tenantAccessControl.get(
+                    APIConstants.NetworkSecurityAccessControl.TENANT_HOSTS);
+            List<String> tenantHosts = null;
+            if (tenantHostsArray != null) {
+                tenantHosts = new ArrayList<>();
+                for (Object tenantHost : tenantHostsArray) {
+                    tenantHosts.add(tenantHost.toString());
                 }
-                if (!matched) {
-                    throw buildURLBlockedException(host);
+            }
+            applyAccessControlPolicy(host, tenantMode, tenantHosts, tenantBlockPrivate);
+        }
+    }
+
+    /**
+     * Extract endpoint URLs from endpoint config object.
+     *
+     * @param endpointConfigObj Endpoint config JSON object
+     * @param endpointType      Indicating which endpoint to be extracted
+     * @param endpoints         List of URLs. Extracted URL(s), if any, are added to this list.
+     */
+    public static void extractURLsFromEndpointConfig(org.json.JSONObject endpointConfigObj, String endpointType,
+                                                      ArrayList<String> endpoints) throws APIManagementException {
+        if (!endpointConfigObj.isNull(endpointType)) {
+            org.json.JSONObject endpointObj = endpointConfigObj.optJSONObject(endpointType);
+            if (endpointObj != null) {
+                String url = endpointObj.optString(APIConstants.API_DATA_URL, null);
+                if (StringUtils.isNotBlank(url)) {
+                    endpoints.add(url);
                 }
             } else {
-                // allow_all mode: exceptions are a denylist
-                if (exceptions != null) {
-                    for (String pattern : exceptions) {
-                        if (StringUtils.isBlank(pattern)) {
-                            continue;
-                        }
-                        if (host.matches(toWildcardRegex(pattern))) {
-                            throw buildURLBlockedException(host);
-                        }
-                    }
-                }
-            }
-
-            // Step 2: Private network access block — resolves host and checks against reserved address ranges
-            String blockPrivateNetworkAccess = config.getFirstProperty(
-                    APIConstants.OutboundRequestSecurity.BLOCK_PRIVATE_NETWORK_ACCESS);
-            if (Boolean.parseBoolean(blockPrivateNetworkAccess)) {
-                try {
-                    InetAddress[] addresses = InetAddress.getAllByName(host);
-                    for (InetAddress address : addresses) {
-                        if (log.isDebugEnabled()) {
-                            log.debug("Checking private network access for host: " + host
-                                    + ", resolved to: " + address.getHostAddress());
-                        }
-                        if (isPrivateNetworkAddress(address)) {
-                            log.warn("Blocking private network access attempt to host: " + host
-                                    + " (" + address.getHostAddress() + ")");
-                            throw buildURLBlockedException(host);
+                org.json.JSONArray endpointArray = endpointConfigObj.optJSONArray(endpointType);
+                if (endpointArray != null) {
+                    for (int i = 0; i < endpointArray.length(); i++) {
+                        String url = endpointArray.getJSONObject(i)
+                                .optString(APIConstants.API_DATA_URL, null);
+                        if (StringUtils.isNotBlank(url)) {
+                            endpoints.add(url);
                         }
                     }
-                } catch (UnknownHostException e) {
-                    throw buildURLBlockedException(host);
                 }
             }
         }
+    }
 
-        // Step 3: Tenant host allowlist — independent of platform config, enforced only when explicitly enabled by the tenant admin
-        if (enableHostAllowlist) {
-            JSONArray allowlistPatterns = (JSONArray) outboundRequestSecurity.get(
-                    APIConstants.OutboundRequestSecurity.HOST_ALLOWLIST_PATTERNS);
-            if (allowlistPatterns == null || allowlistPatterns.isEmpty()) {
+    private static void applyAccessControlPolicy(String host, String mode, List<String> hosts,
+            boolean blockPrivateNetworkAccess) throws APIManagementException {
+
+        if (StringUtils.isBlank(mode)) {
+            if (hosts != null && !hosts.isEmpty()) {
+                log.warn("Network security access control has hosts configured but no mode is set. "
+                        + "The hosts list will be ignored. Set mode to 'allow' or 'deny'.");
+            }
+            // fall through to blank-mode private network check below
+
+        } else if (APIConstants.NetworkSecurityAccessControl.MODE_ALLOW.equalsIgnoreCase(mode)) {
+            if (hosts == null || hosts.isEmpty()) {
+                log.warn("Network security access control is configured with mode 'allow' but no hosts are defined. "
+                        + "All outbound requests will be blocked.");
                 throw buildURLBlockedException(host);
             }
-            boolean matched = false;
-            for (Object patternObj : allowlistPatterns) {
-                if (patternObj == null) {
-                    continue;
-                }
-                String pattern = patternObj.toString();
-                if (StringUtils.isBlank(pattern)) {
-                    continue;
-                }
-                if (host.matches(toWildcardRegex(pattern))) {
-                    matched = true;
-                    break;
+            // hostname match → ALLOW immediately, DNS resolution skipped
+            if (isHostInList(host, hosts)) {
+                return;
+            }
+            // hostname did not match — resolve and check resolved IPs against allow list.
+            // hosts list is authoritative: blockPrivateNetworkAccess does not apply in allow mode.
+            InetAddress[] addresses;
+            try {
+                addresses = InetAddress.getAllByName(host);
+            } catch (UnknownHostException e) {
+                throw buildURLBlockedException(host);
+            }
+            if (isAnyResolvedIpInList(addresses, hosts)) {
+                return;
+            }
+            throw buildURLBlockedException(host);
+
+        } else if (APIConstants.NetworkSecurityAccessControl.MODE_DENY.equalsIgnoreCase(mode)) {
+            if (isHostInList(host, hosts)) {
+                throw buildURLBlockedException(host);
+            }
+            // hostname did not match — resolve once, reused for IP deny list check and private network check
+            InetAddress[] addresses;
+            try {
+                addresses = InetAddress.getAllByName(host);
+            } catch (UnknownHostException e) {
+                throw buildURLBlockedException(host);
+            }
+            if (isAnyResolvedIpInList(addresses, hosts)) {
+                log.warn("Blocking outbound request to host: '" + host + "' — a resolved IP is in the deny list.");
+                throw buildURLBlockedException(host);
+            }
+            if (blockPrivateNetworkAccess) {
+                for (InetAddress address : addresses) {
+                    if (isPrivateNetworkAddress(address)) {
+                        log.warn("Blocking private network access attempt to host: '" + host
+                                + "' (" + address.getHostAddress() + ")");
+                        throw buildURLBlockedException(host);
+                    }
                 }
             }
-            if (!matched) {
+            return; // deny mode fully handled — do not fall through
+
+        } else {
+            APIManagementException ex = new APIManagementException(
+                    "Internal server error. Please contact the system administrator.",
+                    ExceptionCodes.from(ExceptionCodes.INTERNAL_ERROR_WITH_SPECIFIC_MESSAGE,
+                            "Internal server error. Please contact the system administrator."));
+            log.error("Network security access control misconfiguration: mode='" + mode + "' is not a valid value "
+                    + "(expected 'allow' or 'deny').", ex);
+            throw ex;
+        }
+
+        // Blank mode: hosts ignored, only blockPrivateNetworkAccess applies
+        if (blockPrivateNetworkAccess) {
+            try {
+                InetAddress[] addresses = InetAddress.getAllByName(host);
+                for (InetAddress address : addresses) {
+                    if (isPrivateNetworkAddress(address)) {
+                        log.warn("Blocking private network access attempt to host: '" + host
+                                + "' (" + address.getHostAddress() + ")");
+                        throw buildURLBlockedException(host);
+                    }
+                }
+            } catch (UnknownHostException e) {
                 throw buildURLBlockedException(host);
             }
         }
+    }
+
+    private static boolean isAnyResolvedIpInList(InetAddress[] addresses, List<String> hosts) {
+        if (hosts == null || addresses == null) {
+            return false;
+        }
+        for (InetAddress address : addresses) {
+            if (isHostInList(address.getHostAddress(), hosts)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isHostInList(String host, List<String> hosts) {
+        if (hosts == null) {
+            return false;
+        }
+        String normalizedHost = host.toLowerCase(Locale.ROOT);
+        for (String pattern : hosts) {
+            if (StringUtils.isBlank(pattern)) {
+                continue;
+            }
+            if (normalizedHost.matches(toWildcardRegex(pattern.toLowerCase(Locale.ROOT)))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -12641,9 +12708,10 @@ public final class APIUtil {
     }
 
     private static APIManagementException buildURLBlockedException(String host) {
-        APIManagementException ex = new APIManagementException("Outbound request blocked by outbound request security policy.",
+        APIManagementException ex = new APIManagementException(
+                "Outbound request blocked by network security access control policy.",
                 ExceptionCodes.UNTRUSTED_URL);
-        log.error("Outbound request to host '" + host + "' blocked by outbound request security policy.", ex);
+        log.error("Outbound request to host '" + host + "' blocked by network security access control policy.", ex);
         return ex;
     }
 

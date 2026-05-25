@@ -3997,20 +3997,22 @@ public final class APIConstants {
         public static final String QUEUE_CAPACITY = THREAD_POOL_CONFIG + "QueueCapacity";
     }
 
-    // Constants related to outbound request security (SSRF prevention)
-    public static class OutboundRequestSecurity {
+    // Constants related to network security access control (SSRF prevention)
+    public static class NetworkSecurityAccessControl {
 
-        private static final String CONFIG_PREFIX = "OutboundRequestSecurity.";
+        private static final String CONFIG_PREFIX = "NetworkSecurityAccessControl.";
         public static final String ENABLED = CONFIG_PREFIX + "Enabled";
-        public static final String BLOCK_PRIVATE_NETWORK_ACCESS = CONFIG_PREFIX + "BlockPrivateNetworkAccess";
         public static final String MODE = CONFIG_PREFIX + "Mode";
-        public static final String EXCEPTIONS = CONFIG_PREFIX + "Exception";
-        public static final String MODE_ALLOW_ALL = "allow_all";
-        public static final String MODE_DENY_ALL = "deny_all";
+        public static final String HOSTS = CONFIG_PREFIX + "Host";
+        public static final String BLOCK_PRIVATE_NETWORK_ACCESS = CONFIG_PREFIX + "BlockPrivateNetworkAccess";
+        public static final String MODE_ALLOW = "allow";
+        public static final String MODE_DENY = "deny";
 
-        public static final String TENANT_CONFIG_KEY = "OutboundRequestSecurity";
-        public static final String ENABLE_HOST_ALLOWLIST = "EnableHostAllowlist";
-        public static final String HOST_ALLOWLIST_PATTERNS = "HostAllowlistPatterns";
+        // Tenant config JSON keys (under "NetworkSecurityAccessControl" in tenant-conf.json)
+        public static final String TENANT_CONFIG_KEY = "NetworkSecurityAccessControl";
+        public static final String TENANT_MODE = "Mode";
+        public static final String TENANT_HOSTS = "Hosts";
+        public static final String TENANT_BLOCK_PRIVATE_NETWORK_ACCESS = "BlockPrivateNetworkAccess";
     }
 
 }

@@ -37,8 +37,10 @@ import org.wso2.carbon.apimgt.rest.api.common.RestApiCommonUtil;
 import org.wso2.carbon.apimgt.rest.api.common.RestApiConstants;
 import org.wso2.carbon.apimgt.rest.api.util.utils.RestApiUtil;
 
+import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -272,16 +274,13 @@ public class KeyManagersApiServiceImpl implements KeyManagersApiService {
     }
 
     /**
-     * Validates all outbound URLs defined in the given Key Manager configuration
-     * against platform and tenant outbound request security policies.
-     * If a URL fails outbound request validation with a client-side validation
-     * error (HTTP 400), a field-specific bad request is returned to help identify
-     * the invalid endpoint. Internal server errors and other unexpected failures
-     * are propagated unchanged.
+     * Validates all outbound URLs defined in the given Key Manager configuration against
+     * network security access control policies. Blank and non-URL values are silently skipped.
+     * If a URL fails validation with a client error (HTTP 400), a field-specific bad request
+     * is returned. Internal errors are propagated unchanged.
      *
      * @param body Key Manager configuration containing URLs to validate
-     * @throws APIManagementException if URL validation fails or an internal
-     *                                outbound request validation error occurs
+     * @throws APIManagementException if URL validation fails
      */
     private void validateKeyManagerURLs(KeyManagerDTO body) throws APIManagementException {
         Map<String, String> urlFields = new LinkedHashMap<>();
@@ -339,23 +338,24 @@ public class KeyManagersApiServiceImpl implements KeyManagersApiService {
     }
 
     /**
-     * Validates a Key Manager endpoint URL against outbound request security policies.
-     * Null or blank values are silently skipped, allowing optional endpoint fields to
-     * remain unset without triggering a validation error. If the URL is rejected by
-     * outbound request validation with a client-side validation error (HTTP 400), the
-     * original exception is wrapped with a field-specific message so the caller can
-     * identify which Key Manager endpoint contains the untrusted URL. Internal server
-     * errors and other non-client validation failures are propagated unchanged.
+     * Validates a single Key Manager endpoint URL against network security access control policies.
+     * Blank and non-URL values (e.g. "none") are silently skipped for backward compatibility.
+     * If validation fails with a client error (HTTP 400), the exception is re-thrown with a
+     * field-specific message. Other failures are propagated unchanged.
      *
-     * @param url       Key Manager endpoint URL to validate; null or blank values are skipped
+     * @param url       URL to validate; blank and non-URL values are silently skipped
      * @param fieldName descriptive name of the Key Manager URL field being validated
-     * @throws APIManagementException if the URL is malformed, untrusted, or
-     *                                outbound request validation fails
+     * @throws APIManagementException if the URL is blocked by a host validation policy
      */
     private void validateKeyManagerURL(String url, String fieldName)
             throws APIManagementException {
         if (StringUtils.isBlank(url)) {
             return;
+        }
+        try {
+            new URL(url).getHost();
+        } catch (MalformedURLException e) {
+            return; // not a URL (e.g. "none"), skip validation
         }
         try {
             APIUtil.validateRemoteURL(url, RestApiCommonUtil.getLoggedInUserTenantDomain());
