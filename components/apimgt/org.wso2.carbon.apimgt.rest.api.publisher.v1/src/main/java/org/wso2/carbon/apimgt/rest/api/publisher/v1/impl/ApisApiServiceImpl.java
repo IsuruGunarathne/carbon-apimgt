@@ -3982,6 +3982,25 @@ public class ApisApiServiceImpl implements ApisApiService {
                 RestApiUtil.handleBadRequest(errorMessage, log);
             } else {
                 additionalPropertiesAPI = new ObjectMapper().readValue(additionalProperties, APIDTO.class);
+                Object rawEndpointConfig = additionalPropertiesAPI.getEndpointConfig();
+                if (rawEndpointConfig instanceof Map) {
+                    org.json.JSONObject endpointConfigObj = new org.json.JSONObject((Map) rawEndpointConfig);
+                    if (!APIConstants.ENDPOINT_TYPE_DEFAULT.equalsIgnoreCase(
+                            endpointConfigObj.optString(APIConstants.API_ENDPOINT_CONFIG_PROTOCOL_TYPE))) {
+                        ArrayList<String> endpointURLs = new ArrayList<>();
+                        APIUtil.extractURLsFromEndpointConfig(endpointConfigObj,
+                                APIConstants.API_DATA_PRODUCTION_ENDPOINTS, endpointURLs);
+                        APIUtil.extractURLsFromEndpointConfig(endpointConfigObj,
+                                APIConstants.API_DATA_SANDBOX_ENDPOINTS, endpointURLs);
+                        APIUtil.extractURLsFromEndpointConfig(endpointConfigObj,
+                                APIConstants.ENDPOINT_PRODUCTION_FAILOVERS, endpointURLs);
+                        APIUtil.extractURLsFromEndpointConfig(endpointConfigObj,
+                                APIConstants.ENDPOINT_SANDBOX_FAILOVERS, endpointURLs);
+                        for (String endpointURL : endpointURLs) {
+                            APIUtil.validateRemoteURL(endpointURL, RestApiCommonUtil.getLoggedInUserTenantDomain());
+                        }
+                    }
+                }
             }
 
             if (schema != null && StringUtils.isNotEmpty(schema)) {
@@ -4058,6 +4077,9 @@ public class ApisApiServiceImpl implements ApisApiService {
         } catch (APIManagementException e) {
             if (e.getMessage().contains(ExceptionCodes.API_CONTEXT_MALFORMED_EXCEPTION.getErrorMessage())) {
                 RestApiUtil.handleBadRequest(e.getMessage(), e, log);
+            }
+            if (e.getErrorHandler() != null && e.getErrorHandler().getHttpStatusCode() == 400) {
+                RestApiUtil.handleBadRequest(e.getErrorHandler().getErrorDescription(), e, log);
             }
             String errorMessage = "Error while adding new API : " + additionalPropertiesAPI.getProvider() + "-" +
                     additionalPropertiesAPI.getName() + "-" + additionalPropertiesAPI.getVersion() + " - "
