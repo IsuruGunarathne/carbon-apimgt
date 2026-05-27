@@ -12587,6 +12587,7 @@ public final class APIUtil {
             try {
                 addresses = InetAddress.getAllByName(host);
             } catch (UnknownHostException e) {
+                log.warn("Blocking outbound request to host: '" + host + "' — hostname could not be resolved.");
                 throw buildURLBlockedException(host);
             }
             if (isAnyResolvedIpInList(addresses, hosts)) {
@@ -12603,6 +12604,7 @@ public final class APIUtil {
             try {
                 addresses = InetAddress.getAllByName(host);
             } catch (UnknownHostException e) {
+                log.warn("Blocking outbound request to host: '" + host + "' — hostname could not be resolved.");
                 throw buildURLBlockedException(host);
             }
             if (isAnyResolvedIpInList(addresses, hosts)) {
@@ -12642,6 +12644,7 @@ public final class APIUtil {
                     }
                 }
             } catch (UnknownHostException e) {
+                log.warn("Blocking outbound request to host: '" + host + "' — hostname could not be resolved.");
                 throw buildURLBlockedException(host);
             }
         }
