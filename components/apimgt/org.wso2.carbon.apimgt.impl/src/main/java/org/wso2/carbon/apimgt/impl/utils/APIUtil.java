@@ -460,6 +460,10 @@ public final class APIUtil {
     private static double retryProgressionFactor;
     private static String gatewayTypes;
     private static int maxRetryCount;
+    private static boolean networkSecurityEnabled;
+    private static String networkSecurityMode;
+    private static List<String> networkSecurityHosts;
+    private static boolean networkSecurityBlockPrivateAccess;
 
     //constants for getting masked token
     private static final int MAX_LEN = 36;
@@ -487,6 +491,14 @@ public final class APIUtil {
         retryProgressionFactor = apiManagerConfiguration.getGatewayArtifactSynchronizerProperties()
                 .getRetryProgressionFactor();
         gatewayTypes = apiManagerConfiguration.getFirstProperty(APIConstants.API_GATEWAY_TYPE);
+        networkSecurityEnabled = Boolean.parseBoolean(apiManagerConfiguration
+                .getFirstProperty(APIConstants.NetworkSecurityAccessControl.ENABLED));
+        networkSecurityMode = apiManagerConfiguration
+                .getFirstProperty(APIConstants.NetworkSecurityAccessControl.MODE);
+        networkSecurityHosts = apiManagerConfiguration
+                .getProperty(APIConstants.NetworkSecurityAccessControl.HOSTS);
+        networkSecurityBlockPrivateAccess = Boolean.parseBoolean(apiManagerConfiguration
+                .getFirstProperty(APIConstants.NetworkSecurityAccessControl.BLOCK_PRIVATE_NETWORK_ACCESS));
         try {
             eventPublisherFactory = ServiceReferenceHolder.getInstance().getEventPublisherFactory();
             eventPublishers.putIfAbsent(EventPublisherType.ASYNC_WEBHOOKS,
@@ -12474,11 +12486,6 @@ public final class APIUtil {
             return;
         }
 
-        APIManagerConfiguration config = ServiceReferenceHolder.getInstance()
-                .getAPIManagerConfigurationService().getAPIManagerConfiguration();
-        boolean platformEnabled = Boolean.parseBoolean(
-                config.getFirstProperty(APIConstants.NetworkSecurityAccessControl.ENABLED));
-
         JSONObject tenantConfig = getTenantConfig(tenantDomain);
         JSONObject tenantAccessControl = null;
         if (tenantConfig != null) {
@@ -12487,7 +12494,7 @@ public final class APIUtil {
         }
         boolean tenantEnabled = tenantAccessControl != null;
 
-        if (!platformEnabled && !tenantEnabled) {
+        if (!networkSecurityEnabled && !tenantEnabled) {
             return;
         }
 
@@ -12503,12 +12510,9 @@ public final class APIUtil {
                     ExceptionCodes.MALFORMED_URL);
         }
 
-        if (platformEnabled) {
-            String mode = config.getFirstProperty(APIConstants.NetworkSecurityAccessControl.MODE);
-            List<String> hosts = config.getProperty(APIConstants.NetworkSecurityAccessControl.HOSTS);
-            boolean blockPrivate = Boolean.parseBoolean(
-                    config.getFirstProperty(APIConstants.NetworkSecurityAccessControl.BLOCK_PRIVATE_NETWORK_ACCESS));
-            applyAccessControlPolicy(host, mode, hosts, blockPrivate);
+        if (networkSecurityEnabled) {
+            applyAccessControlPolicy(host, networkSecurityMode, networkSecurityHosts,
+                    networkSecurityBlockPrivateAccess);
         }
 
         if (tenantEnabled) {
@@ -12570,7 +12574,6 @@ public final class APIUtil {
                         + "The hosts list will be ignored. Set mode to 'allow' or 'deny'.");
             }
             // fall through to blank-mode private network check below
-
         } else if (APIConstants.NetworkSecurityAccessControl.MODE_ALLOW.equalsIgnoreCase(mode)) {
             if (hosts == null || hosts.isEmpty()) {
                 log.warn("Network security access control is configured with mode 'allow' but no hosts are defined. "
@@ -12624,9 +12627,8 @@ public final class APIUtil {
 
         } else {
             APIManagementException ex = new APIManagementException(
-                    "Internal server error. Please contact the system administrator.",
-                    ExceptionCodes.from(ExceptionCodes.INTERNAL_ERROR_WITH_SPECIFIC_MESSAGE,
-                            "Internal server error. Please contact the system administrator."));
+                    ExceptionCodes.NETWORK_SECURITY_ACCESS_CONTROL_MISCONFIGURED.getErrorMessage(),
+                    ExceptionCodes.NETWORK_SECURITY_ACCESS_CONTROL_MISCONFIGURED);
             log.error("Network security access control misconfiguration: mode='" + mode + "' is not a valid value "
                     + "(expected 'allow' or 'deny').", ex);
             throw ex;
