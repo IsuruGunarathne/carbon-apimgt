@@ -29,6 +29,7 @@
     <artifactId>org.wso2.carbon.apimgt.tracing</artifactId>
     <packaging>bundle</packaging>
     <name>WSO2 Carbon - API Tracing</name>
+    <description>Tracing functionality for API Mgt/Store solution</description>
     <url>http://wso2.org</url>
 
     <dependencies>
