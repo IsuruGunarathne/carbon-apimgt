@@ -998,6 +998,7 @@ public class OASParserUtil {
         } catch (IOException e) {
             throw new APIManagementException("Error reading master swagger file" + e);
         }
+        runDirectRefValidation(content, oasParserOptions);
         String openAPIContent = "";
         SwaggerVersion version;
         version = getSwaggerVersion(content);
@@ -1088,6 +1089,7 @@ public class OASParserUtil {
     @UsedByMigrationClient
     public static APIDefinitionValidationResponse validateAPIDefinition(String apiDefinition, boolean returnJsonContent,
             OASParserOptions oasParserOptions) throws APIManagementException {
+        runDirectRefValidation(apiDefinition, oasParserOptions);
         String apiDefinitionProcessed = apiDefinition;
         if (!apiDefinition.trim().startsWith("{")) {
             try {
@@ -1306,6 +1308,7 @@ public class OASParserUtil {
                         buffer.write(chunk, 0, n);
                     }
                     String responseStr = buffer.toString(StandardCharsets.UTF_8.name());
+                    runDirectRefValidation(responseStr, oasParserOptions);
                     String responseStrProcessed = responseStr;
                     if (!responseStr.trim().startsWith("{")) {
                         try {
@@ -2381,6 +2384,20 @@ public class OASParserUtil {
         }
         collectRefs(root, refs);
         return refs;
+    }
+
+    /**
+     * Layer-1 SSRF pre-validation. Runs the (impl-supplied) RefValidator hook over every direct external $ref URL in
+     * the content. No-op when no hook is set (policy inactive). Throws UNTRUSTED_URL (HTTP 400) on the first blocked ref.
+     */
+    private static void runDirectRefValidation(String content, OASParserOptions options)
+            throws org.wso2.carbon.apimgt.api.APIManagementException {
+        if (options == null || options.getRefValidator() == null) {
+            return;
+        }
+        for (String ref : extractExternalRefUrls(content)) {
+            options.getRefValidator().validate(ref, options.getRefValidationTenantDomain());
+        }
     }
 
     private static void collectRefs(JsonNode node, Set<String> refs) {
