@@ -2353,4 +2353,57 @@ public class OASParserUtil {
             throw new APIManagementException("Error while parsing YAML with configured codePointLimit", e);
         }
     }
+
+    /**
+     * Collect every {@code $ref} value (JSON or YAML) that is an absolute http(s) URL. Relative refs and in-document
+     * "#/..." fragments are ignored. Never throws on malformed content (returns what it could parse / empty).
+     *
+     * @param content raw OpenAPI/Swagger definition (JSON or YAML)
+     * @return set of absolute http(s) $ref URLs (may be empty, never null)
+     */
+    public static Set<String> extractExternalRefUrls(String content) {
+        Set<String> refs = new LinkedHashSet<>();
+        if (StringUtils.isBlank(content)) {
+            return refs;
+        }
+        JsonNode root;
+        try {
+            root = new ObjectMapper().readTree(content);
+        } catch (Exception jsonEx) {
+            try {
+                root = new ObjectMapper(new YAMLFactory()).readTree(content);
+            } catch (Exception yamlEx) {
+                if (log.isDebugEnabled()) {
+                    log.debug("Could not parse content for $ref extraction; skipping pre-validation", yamlEx);
+                }
+                return refs;
+            }
+        }
+        collectRefs(root, refs);
+        return refs;
+    }
+
+    private static void collectRefs(JsonNode node, Set<String> refs) {
+        if (node == null) {
+            return;
+        }
+        if (node.isObject()) {
+            JsonNode ref = node.get("$ref");
+            if (ref != null && ref.isTextual()) {
+                String value = ref.textValue().trim();
+                String lower = value.toLowerCase(java.util.Locale.ROOT);
+                if (lower.startsWith("http://") || lower.startsWith("https://")) {
+                    refs.add(value);
+                }
+            }
+            java.util.Iterator<JsonNode> it = node.elements();
+            while (it.hasNext()) {
+                collectRefs(it.next(), refs);
+            }
+        } else if (node.isArray()) {
+            for (JsonNode child : node) {
+                collectRefs(child, refs);
+            }
+        }
+    }
 }
