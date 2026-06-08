@@ -962,8 +962,7 @@ public class OAS3Parser extends APIDefinition {
         APIDefinitionValidationResponse validationResponse = new APIDefinitionValidationResponse();
         String processedDefinition = OASParserUtil.preprocessYamlWithLimit(apiDefinition, parserOptions);
         OpenAPIV3Parser openAPIV3Parser = new OpenAPIV3Parser();
-        ParseOptions options = new ParseOptions();
-        options.setResolve(true);
+        ParseOptions options = buildParseOptions(parserOptions, true);
         SwaggerParseResult parseAttemptForV3 = openAPIV3Parser.readContents(processedDefinition, null, options);
         if (CollectionUtils.isNotEmpty(parseAttemptForV3.getMessages())) {
             validationResponse.setValid(false);
@@ -2034,8 +2033,24 @@ public class OAS3Parser extends APIDefinition {
     }
 
     private ParseOptions convertOptionsToParseOptions(OASParserOptions options) {
+        // resolve=false here: the getOpenAPI path does not fetch external refs, so the safe-resolver is inert.
+        return buildParseOptions(options, false);
+    }
+
+    /**
+     * Single source of truth for swagger-parser ParseOptions. Applies the Layer-2 SSRF safe-url resolver when enabled.
+     */
+    public static ParseOptions buildParseOptions(OASParserOptions options, boolean resolve) {
         ParseOptions parserOptions = new ParseOptions();
-        parserOptions.setExplicitStyleAndExplode(options.isExplicitStyleAndExplode());
+        parserOptions.setResolve(resolve);
+        if (options != null) {
+            parserOptions.setExplicitStyleAndExplode(options.isExplicitStyleAndExplode());
+            if (options.isSafeRefResolution()) {
+                parserOptions.setSafelyResolveURL(true);
+                parserOptions.setRemoteRefAllowList(options.getRemoteRefAllowList());
+                parserOptions.setRemoteRefBlockList(options.getRemoteRefBlockList());
+            }
+        }
         return parserOptions;
     }
 

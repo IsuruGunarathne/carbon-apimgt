@@ -22,6 +22,7 @@ import org.wso2.carbon.apimgt.api.model.APIResourceMediationPolicy;
 import org.wso2.carbon.apimgt.api.model.OASParserOptions;
 import org.wso2.carbon.apimgt.api.model.Scope;
 import org.wso2.carbon.apimgt.api.model.URITemplate;
+import org.wso2.carbon.apimgt.spec.parser.definitions.APISpecParserConstants;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -550,5 +551,69 @@ public class OAS3ParserTest extends OASTestBase {
         apiScopes.add(globalScope);
         apiScopes.add(petLocalScope);
         return apiScopes;
+    }
+
+    @Test
+    public void testBuildParseOptionsAppliesSafeMode() {
+        OASParserOptions opts = new OASParserOptions();
+        opts.setSafeRefResolution(true);
+        opts.setRemoteRefAllowList(java.util.Arrays.asList("a.com"));
+        opts.setRemoteRefBlockList(java.util.Collections.singletonList("*"));
+        io.swagger.v3.parser.core.models.ParseOptions po = OAS3Parser.buildParseOptions(opts, true);
+        Assert.assertTrue(po.isResolve());
+        Assert.assertTrue(po.isSafelyResolveURL());
+        Assert.assertEquals(java.util.Arrays.asList("a.com"), po.getRemoteRefAllowList());
+        Assert.assertEquals(java.util.Collections.singletonList("*"), po.getRemoteRefBlockList());
+    }
+
+    @Test
+    public void testBuildParseOptionsSafeOff() {
+        io.swagger.v3.parser.core.models.ParseOptions po = OAS3Parser.buildParseOptions(new OASParserOptions(), true);
+        Assert.assertTrue(po.isResolve());
+        Assert.assertFalse(po.isSafelyResolveURL());
+    }
+
+    @Test
+    public void testBlockedRefIsNotFetched() throws Exception {
+        System.clearProperty(APISpecParserConstants.SWAGGER_RELAXED_VALIDATION);
+        final java.util.concurrent.atomic.AtomicInteger hits = new java.util.concurrent.atomic.AtomicInteger();
+        com.sun.net.httpserver.HttpServer server =
+                com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/internal.yaml", ex -> {
+            hits.incrementAndGet();
+            byte[] b = "type: object".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(200, b.length); ex.getResponseBody().write(b); ex.close();
+        });
+        server.start();
+        int port = server.getAddress().getPort();
+        try {
+            String def =
+                "openapi: 3.0.0\ninfo: { title: t, version: '1.0' }\npaths:\n  /a:\n    get:\n" +
+                "      responses:\n        '200':\n          description: ok\n          content:\n" +
+                "            application/json:\n              schema:\n" +
+                "                $ref: 'http://127.0.0.1:" + port + "/internal.yaml'\n";
+            OASParserOptions opts = new OASParserOptions();
+            opts.setSafeRefResolution(true);
+            opts.setRemoteRefBlockList(java.util.Collections.singletonList("*"));
+            APIDefinitionValidationResponse resp = new OAS3Parser().validateAPIDefinition(def, "127.0.0.1", false, opts);
+            Assert.assertEquals("blocked ref must yield ZERO fetches", 0, hits.get());
+            Assert.assertFalse(resp.isValid());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    public void testWildcardHostPatternDroppedButPrivateStillBlocked() throws Exception {
+        System.clearProperty(APISpecParserConstants.SWAGGER_RELAXED_VALIDATION);
+        OASParserOptions opts = new OASParserOptions();
+        opts.setSafeRefResolution(true);
+        opts.setRemoteRefAllowList(java.util.Collections.singletonList("169.254.*")); // dropped by the library matcher
+        String def = "openapi: 3.0.0\ninfo: {title: t, version: '1.0'}\npaths:\n  /a:\n    get:\n" +
+            "      responses:\n        '200':\n          description: ok\n          content:\n" +
+            "            application/json:\n              schema:\n" +
+            "                $ref: 'http://169.254.169.254/x.yaml'\n";
+        APIDefinitionValidationResponse resp = new OAS3Parser().validateAPIDefinition(def, "169.254.169.254", false, opts);
+        Assert.assertFalse("link-local must still be blocked despite dropped wildcard allow pattern", resp.isValid());
     }
 }
