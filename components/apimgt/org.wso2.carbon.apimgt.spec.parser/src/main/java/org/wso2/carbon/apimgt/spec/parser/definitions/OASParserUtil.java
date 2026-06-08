@@ -62,6 +62,8 @@ import io.swagger.v3.parser.ObjectMapperFactory;
 import io.swagger.v3.parser.OpenAPIV3Parser;
 import io.swagger.v3.parser.converter.SwaggerConverter;
 import io.swagger.v3.parser.core.models.ParseOptions;
+import io.swagger.v3.parser.core.models.SwaggerParseResult;
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.logging.Log;
@@ -1005,9 +1007,21 @@ public class OASParserUtil {
         String filePath = masterSwagger.getAbsolutePath();
         if (SwaggerVersion.OPEN_API.equals(version)) {
             OpenAPIV3Parser openAPIV3Parser = new OpenAPIV3Parser();
-            ParseOptions options = new ParseOptions();
-            options.setResolve(true);
-            OpenAPI openAPI = openAPIV3Parser.read(filePath, null, options);
+            ParseOptions options = OAS3Parser.buildParseOptions(oasParserOptions, true);
+            SwaggerParseResult result = openAPIV3Parser.readLocation(filePath, null, options);
+            if (result.getOpenAPI() == null || CollectionUtils.isNotEmpty(result.getMessages())) {
+                APIDefinitionValidationResponse invalid = new APIDefinitionValidationResponse();
+                invalid.setValid(false);
+                if (CollectionUtils.isNotEmpty(result.getMessages())) {
+                    for (String m : result.getMessages()) {
+                        addErrorToValidationResponse(invalid, m);
+                    }
+                } else {
+                    addErrorToValidationResponse(invalid, "Could not resolve the OpenAPI archive references");
+                }
+                return invalid;
+            }
+            OpenAPI openAPI = result.getOpenAPI();
             openAPIContent = convertOAStoJSON(openAPI);
         } else if (SwaggerVersion.SWAGGER.equals(version)) {
             SwaggerParser parser = new SwaggerParser();
