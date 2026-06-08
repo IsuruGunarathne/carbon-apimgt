@@ -18,6 +18,7 @@ package org.wso2.carbon.apimgt.api.model;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import java.util.List;
 
 /**
  * Model class to hold OpenAPI Specification parser options.
@@ -28,8 +29,33 @@ public class OASParserOptions {
 
     private boolean explicitStyleAndExplode = true;
     private Integer yamlCodePointLimit = null;
+    private boolean safeRefResolution = false;
+    private List<String> remoteRefAllowList = null;
+    private List<String> remoteRefBlockList = null;
+    private String refValidationTenantDomain = null;
+    private transient RefValidator refValidator = null;
+
+    /**
+     * Layer-1 SSRF hook. Set by the impl layer to {@code APIUtil::validateRemoteURL} so the parser layer can run
+     * the platform/tenant network-security policy on each direct external $ref without a compile-time impl dependency.
+     */
+    public interface RefValidator {
+        void validate(String url, String tenantDomain) throws org.wso2.carbon.apimgt.api.APIManagementException;
+    }
 
     public OASParserOptions() {
+    }
+
+    public OASParserOptions(OASParserOptions other) {
+        if (other != null) {
+            this.explicitStyleAndExplode = other.explicitStyleAndExplode;
+            this.yamlCodePointLimit = other.yamlCodePointLimit;
+            this.safeRefResolution = other.safeRefResolution;
+            this.remoteRefAllowList = other.remoteRefAllowList;
+            this.remoteRefBlockList = other.remoteRefBlockList;
+            this.refValidationTenantDomain = other.refValidationTenantDomain;
+            this.refValidator = other.refValidator;
+        }
     }
 
     public boolean isExplicitStyleAndExplode() {
@@ -83,5 +109,16 @@ public class OASParserOptions {
         double limit = fileSizeInMB * 1024 * 1024 * 4;
         this.yamlCodePointLimit = limit > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) limit;
     }
+
+    public boolean isSafeRefResolution() { return safeRefResolution; }
+    public void setSafeRefResolution(boolean v) { this.safeRefResolution = v; }
+    public List<String> getRemoteRefAllowList() { return remoteRefAllowList; }
+    public void setRemoteRefAllowList(List<String> v) { this.remoteRefAllowList = v; }
+    public List<String> getRemoteRefBlockList() { return remoteRefBlockList; }
+    public void setRemoteRefBlockList(List<String> v) { this.remoteRefBlockList = v; }
+    public String getRefValidationTenantDomain() { return refValidationTenantDomain; }
+    public void setRefValidationTenantDomain(String v) { this.refValidationTenantDomain = v; }
+    public RefValidator getRefValidator() { return refValidator; }
+    public void setRefValidator(RefValidator v) { this.refValidator = v; }
 
 }
