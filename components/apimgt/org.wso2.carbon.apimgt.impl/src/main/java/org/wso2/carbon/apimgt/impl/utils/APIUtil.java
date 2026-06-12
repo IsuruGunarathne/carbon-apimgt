@@ -12535,8 +12535,6 @@ public final class APIUtil {
         }
     }
 
-    private static final String REF_CATCH_ALL = "*";
-
     public static OASParserOptions buildRefAwareOASParserOptions(OASParserOptions base, String tenantDomain)
             throws APIManagementException {
         OASParserOptions opts = new OASParserOptions(base);
@@ -12545,82 +12543,25 @@ public final class APIUtil {
     }
 
     /**
-     * Populate Layer-2 (library safe-resolver) lists + the Layer-1 hook from the platform + tenant network-security
-     * policy. Direct refs are validated exactly by the hook (validateRemoteURL); the lists configure the transitive
-     * backstop. Mirrors validateRemoteURL's config reading.
+     * Wire the network-security hook onto the parser options. When the platform or tenant network-security policy
+     * is active, the OAS3 parser validates every external $ref URL (top-level, direct, and transitive/nested) through
+     * {@link #validateRemoteURL(String, String)} via the injected custom URL validator; when inactive, no validator
+     * is set and ref resolution behaves as before. The same {@code validateRemoteURL}/{@code applyAccessControlPolicy}
+     * engine is therefore authoritative for top-level URLs, direct refs, and nested refs alike.
      */
     public static void populateRefResolutionPolicy(OASParserOptions opts, String tenantDomain)
             throws APIManagementException {
         opts.setRefValidationTenantDomain(tenantDomain);
 
         JSONObject tenantConfig = getTenantConfig(tenantDomain);
-        JSONObject tenantAccessControl = null;
-        if (tenantConfig != null) {
-            tenantAccessControl = (JSONObject) tenantConfig.get(
-                    APIConstants.NetworkSecurityAccessControl.TENANT_CONFIG_KEY);
-        }
-        boolean tenantEnabled = tenantAccessControl != null;
+        boolean tenantEnabled = tenantConfig != null && tenantConfig.get(
+                APIConstants.NetworkSecurityAccessControl.TENANT_CONFIG_KEY) != null;
 
         if (!networkSecurityEnabled && !tenantEnabled) {
-            opts.setSafeRefResolution(false);
             opts.setRefValidator(null);
             return;
         }
-        opts.setSafeRefResolution(true);
         opts.setRefValidator(APIUtil::validateRemoteURL);
-
-        List<String> allowAccum = null;
-        List<String> blockAccum = new ArrayList<>();
-
-        if (networkSecurityEnabled) {
-            allowAccum = mergeRefPolicyIntoLists(networkSecurityMode, networkSecurityHosts, allowAccum, blockAccum);
-        }
-        if (tenantEnabled) {
-            String tMode = (String) tenantAccessControl.get(APIConstants.NetworkSecurityAccessControl.TENANT_MODE);
-            List<String> tHosts = null;
-            JSONArray arr = (JSONArray) tenantAccessControl.get(APIConstants.NetworkSecurityAccessControl.TENANT_HOSTS);
-            if (arr != null) {
-                tHosts = new ArrayList<>();
-                for (Object h : arr) { tHosts.add(h.toString()); }
-            }
-            allowAccum = mergeRefPolicyIntoLists(tMode, tHosts, allowAccum, blockAccum);
-        }
-        opts.setRemoteRefAllowList(allowAccum);
-        opts.setRemoteRefBlockList(blockAccum.isEmpty() ? null : blockAccum);
-    }
-
-    private static List<String> mergeRefPolicyIntoLists(String mode, List<String> hosts,
-            List<String> allowAccum, List<String> blockAccum) throws APIManagementException {
-        if (StringUtils.isBlank(mode)) {
-            return allowAccum; // blank: private-range block only
-        }
-        if (APIConstants.NetworkSecurityAccessControl.MODE_ALLOW.equalsIgnoreCase(mode)) {
-            List<String> these = (hosts == null) ? new ArrayList<>() : new ArrayList<>(hosts);
-            if (!blockAccum.contains(REF_CATCH_ALL)) {
-                blockAccum.add(REF_CATCH_ALL);
-            }
-            // fail-closed & order-independent: a host already denied must not become allowed
-            List<String> denied = new ArrayList<>(blockAccum);
-            denied.remove(REF_CATCH_ALL);
-            these.removeAll(denied);
-            if (allowAccum == null) {
-                return these;
-            }
-            allowAccum.retainAll(these); // intersection => AND of allow policies
-            return allowAccum;
-        }
-        if (APIConstants.NetworkSecurityAccessControl.MODE_DENY.equalsIgnoreCase(mode)) {
-            if (hosts != null) {
-                blockAccum.addAll(hosts);
-                if (allowAccum != null) {
-                    allowAccum.removeAll(hosts);
-                }
-            }
-            return allowAccum;
-        }
-        throw new APIManagementException(
-                ExceptionCodes.NETWORK_SECURITY_ACCESS_CONTROL_MISCONFIGURED.getErrorMessage(),
-                ExceptionCodes.NETWORK_SECURITY_ACCESS_CONTROL_MISCONFIGURED);
     }
 
     /**

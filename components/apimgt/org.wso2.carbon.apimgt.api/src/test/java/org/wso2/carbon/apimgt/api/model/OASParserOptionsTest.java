@@ -20,7 +20,6 @@ import org.junit.Assert;
 import org.junit.Test;
 import org.wso2.carbon.apimgt.api.APIManagementException;
 import org.wso2.carbon.apimgt.api.ExceptionCodes;
-import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class OASParserOptionsTest {
@@ -28,12 +27,10 @@ public class OASParserOptionsTest {
     @Test
     public void testDefaults() {
         OASParserOptions o = new OASParserOptions();
-        Assert.assertFalse(o.isSafeRefResolution());
-        Assert.assertNull(o.getRemoteRefAllowList());
-        Assert.assertNull(o.getRemoteRefBlockList());
+        Assert.assertTrue(o.isExplicitStyleAndExplode());
+        Assert.assertNull(o.getYamlCodePointLimit());
         Assert.assertNull(o.getRefValidationTenantDomain());
         Assert.assertNull(o.getRefValidator());
-        Assert.assertTrue(o.isExplicitStyleAndExplode());
     }
 
     @Test
@@ -41,27 +38,24 @@ public class OASParserOptionsTest {
         OASParserOptions base = new OASParserOptions();
         base.setExplicitStyleAndExplode("false");
         base.setYamlCodePointLimit("5");
-        base.setSafeRefResolution(true);
-        base.setRemoteRefAllowList(Arrays.asList("a.com"));
-        base.setRemoteRefBlockList(Arrays.asList("*"));
         base.setRefValidationTenantDomain("carbon.super");
         base.setRefValidator((url, t) -> { });
 
         OASParserOptions copy = new OASParserOptions(base);
         Assert.assertFalse(copy.isExplicitStyleAndExplode());
         Assert.assertEquals(base.getYamlCodePointLimit(), copy.getYamlCodePointLimit());
-        Assert.assertTrue(copy.isSafeRefResolution());
-        Assert.assertEquals(Arrays.asList("a.com"), copy.getRemoteRefAllowList());
-        Assert.assertEquals(Arrays.asList("*"), copy.getRemoteRefBlockList());
         Assert.assertEquals("carbon.super", copy.getRefValidationTenantDomain());
         Assert.assertNotNull(copy.getRefValidator());
+        Assert.assertSame(base.getRefValidator(), copy.getRefValidator());
     }
 
     @Test
     public void testCopyConstructorNullSafe() {
         OASParserOptions copy = new OASParserOptions(null);
-        Assert.assertFalse(copy.isSafeRefResolution());
         Assert.assertTrue(copy.isExplicitStyleAndExplode());
+        Assert.assertNull(copy.getYamlCodePointLimit());
+        Assert.assertNull(copy.getRefValidationTenantDomain());
+        Assert.assertNull(copy.getRefValidator());
     }
 
     @Test

@@ -556,21 +556,42 @@ public class OAS3ParserTest extends OASTestBase {
     @Test
     public void testBuildParseOptionsAppliesSafeMode() {
         OASParserOptions opts = new OASParserOptions();
-        opts.setSafeRefResolution(true);
-        opts.setRemoteRefAllowList(java.util.Arrays.asList("a.com"));
-        opts.setRemoteRefBlockList(java.util.Collections.singletonList("*"));
+        opts.setRefValidationTenantDomain("carbon.super");
+        // A non-null RefValidator is the new signal that network-security ref resolution is active.
+        opts.setRefValidator((url, tenantDomain) -> { /* allow everything in this unit test */ });
         io.swagger.v3.parser.core.models.ParseOptions po = OAS3Parser.buildParseOptions(opts, true);
         Assert.assertTrue(po.isResolve());
+        // When a validator is present, the parser must safely resolve URLs and route every fetch through it.
         Assert.assertTrue(po.isSafelyResolveURL());
-        Assert.assertEquals(java.util.Arrays.asList("a.com"), po.getRemoteRefAllowList());
-        Assert.assertEquals(java.util.Collections.singletonList("*"), po.getRemoteRefBlockList());
+        Assert.assertNotNull(po.getCustomUrlValidator());
     }
 
     @Test
     public void testBuildParseOptionsSafeOff() {
+        // No RefValidator set => no safe-url resolution and no custom validator wired into ParseOptions.
         io.swagger.v3.parser.core.models.ParseOptions po = OAS3Parser.buildParseOptions(new OASParserOptions(), true);
         Assert.assertTrue(po.isResolve());
         Assert.assertFalse(po.isSafelyResolveURL());
+        Assert.assertNull(po.getCustomUrlValidator());
+    }
+
+    @Test
+    public void testBuildParseOptionsCustomValidatorDelegatesWithTenantDomain() throws Exception {
+        // The wired custom validator must delegate to the RefValidator, passing the configured tenant domain through.
+        final java.util.concurrent.atomic.AtomicReference<String> seenUrl = new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicReference<String> seenTenant = new java.util.concurrent.atomic.AtomicReference<>();
+        OASParserOptions opts = new OASParserOptions();
+        opts.setRefValidationTenantDomain("acme.org");
+        opts.setRefValidator((url, tenantDomain) -> {
+            seenUrl.set(url);
+            seenTenant.set(tenantDomain);
+        });
+        io.swagger.v3.parser.core.models.ParseOptions po = OAS3Parser.buildParseOptions(opts, true);
+        io.swagger.v3.parser.core.models.UrlValidator customUrlValidator = po.getCustomUrlValidator();
+        Assert.assertNotNull(customUrlValidator);
+        customUrlValidator.validate("http://example.com/ref.yaml");
+        Assert.assertEquals("http://example.com/ref.yaml", seenUrl.get());
+        Assert.assertEquals("acme.org", seenTenant.get());
     }
 
     @Test
@@ -593,8 +614,11 @@ public class OAS3ParserTest extends OASTestBase {
                 "            application/json:\n              schema:\n" +
                 "                $ref: 'http://127.0.0.1:" + port + "/internal.yaml'\n";
             OASParserOptions opts = new OASParserOptions();
-            opts.setSafeRefResolution(true);
-            opts.setRemoteRefBlockList(java.util.Collections.singletonList("*"));
+            opts.setRefValidationTenantDomain("127.0.0.1");
+            // The network-security policy rejects this ref; the parser must short-circuit the fetch.
+            opts.setRefValidator((url, tenantDomain) -> {
+                throw new org.wso2.carbon.apimgt.api.APIManagementException("blocked: " + url);
+            });
             APIDefinitionValidationResponse resp = new OAS3Parser().validateAPIDefinition(def, "127.0.0.1", false, opts);
             Assert.assertEquals("blocked ref must yield ZERO fetches", 0, hits.get());
             Assert.assertFalse(resp.isValid());
@@ -604,16 +628,19 @@ public class OAS3ParserTest extends OASTestBase {
     }
 
     @Test
-    public void testWildcardHostPatternDroppedButPrivateStillBlocked() throws Exception {
+    public void testPrivateRefBlockedByValidator() throws Exception {
         System.clearProperty(APISpecParserConstants.SWAGGER_RELAXED_VALIDATION);
         OASParserOptions opts = new OASParserOptions();
-        opts.setSafeRefResolution(true);
-        opts.setRemoteRefAllowList(java.util.Collections.singletonList("169.254.*")); // dropped by the library matcher
+        opts.setRefValidationTenantDomain("169.254.169.254");
+        // Link-local / private targets must be rejected by the validator.
+        opts.setRefValidator((url, tenantDomain) -> {
+            throw new org.wso2.carbon.apimgt.api.APIManagementException("blocked private ref: " + url);
+        });
         String def = "openapi: 3.0.0\ninfo: {title: t, version: '1.0'}\npaths:\n  /a:\n    get:\n" +
             "      responses:\n        '200':\n          description: ok\n          content:\n" +
             "            application/json:\n              schema:\n" +
             "                $ref: 'http://169.254.169.254/x.yaml'\n";
         APIDefinitionValidationResponse resp = new OAS3Parser().validateAPIDefinition(def, "169.254.169.254", false, opts);
-        Assert.assertFalse("link-local must still be blocked despite dropped wildcard allow pattern", resp.isValid());
+        Assert.assertFalse("link-local ref must be blocked by the network-security validator", resp.isValid());
     }
 }

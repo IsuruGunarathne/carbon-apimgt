@@ -21,7 +21,8 @@ package org.wso2.carbon.apimgt.spec.parser.definitions;
 
 import org.junit.Assert;
 import org.junit.Test;
-import org.wso2.carbon.apimgt.api.APIDefinitionValidationResponse;
+import org.wso2.carbon.apimgt.api.APIManagementException;
+import org.wso2.carbon.apimgt.api.ExceptionCodes;
 import org.wso2.carbon.apimgt.api.model.OASParserOptions;
 
 import java.io.*;
@@ -51,15 +52,25 @@ public class OASArchiveRefTest {
             zos.write(master.getBytes(StandardCharsets.UTF_8)); zos.closeEntry();
         }
         try {
+            // Layer-1 SSRF hook: a RefValidator that rejects the loopback ref. The archive path runs this against
+            // every direct external $ref in the master swagger BEFORE any remote fetch, so the blocked ref must be
+            // rejected without the HttpServer ever being hit.
             OASParserOptions opts = new OASParserOptions();
-            opts.setSafeRefResolution(true);
-            opts.setRemoteRefBlockList(java.util.Collections.singletonList("*"));
-            APIDefinitionValidationResponse resp;
+            opts.setRefValidationTenantDomain("carbon.super");
+            opts.setRefValidator((url, t) -> {
+                if (url.contains("127.0.0.1")) {
+                    throw new APIManagementException("blocked " + url, ExceptionCodes.UNTRUSTED_URL);
+                }
+            });
             try (FileInputStream fis = new FileInputStream(zip)) {
-                resp = OASParserUtil.extractAndValidateOpenAPIArchive(fis, false, opts);
+                OASParserUtil.extractAndValidateOpenAPIArchive(fis, false, opts);
+                Assert.fail("expected UNTRUSTED_URL from Layer-1 ref validation on the blocked archive ref");
+            } catch (APIManagementException e) {
+                Assert.assertEquals(ExceptionCodes.UNTRUSTED_URL.getErrorCode(),
+                        e.getErrorHandler().getErrorCode());
             }
+            // The blocked ref must have been rejected before any remote fetch was attempted.
             Assert.assertEquals(0, hits.get());
-            Assert.assertFalse(resp.isValid());
         } finally {
             server.stop(0);
             zip.delete();

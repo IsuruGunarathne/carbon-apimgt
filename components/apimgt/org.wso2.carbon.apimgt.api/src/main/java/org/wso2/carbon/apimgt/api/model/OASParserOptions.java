@@ -18,7 +18,6 @@ package org.wso2.carbon.apimgt.api.model;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import java.util.List;
 
 /**
  * Model class to hold OpenAPI Specification parser options.
@@ -29,9 +28,6 @@ public class OASParserOptions {
 
     private boolean explicitStyleAndExplode = true;
     private Integer yamlCodePointLimit = null;
-    private boolean safeRefResolution = false;
-    private List<String> remoteRefAllowList = null;
-    private List<String> remoteRefBlockList = null;
     private String refValidationTenantDomain = null;
     private transient RefValidator refValidator = null;
 
@@ -50,9 +46,6 @@ public class OASParserOptions {
         if (other != null) {
             this.explicitStyleAndExplode = other.explicitStyleAndExplode;
             this.yamlCodePointLimit = other.yamlCodePointLimit;
-            this.safeRefResolution = other.safeRefResolution;
-            this.remoteRefAllowList = other.remoteRefAllowList;
-            this.remoteRefBlockList = other.remoteRefBlockList;
             this.refValidationTenantDomain = other.refValidationTenantDomain;
             this.refValidator = other.refValidator;
         }
@@ -110,12 +103,6 @@ public class OASParserOptions {
         this.yamlCodePointLimit = limit > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) limit;
     }
 
-    public boolean isSafeRefResolution() { return safeRefResolution; }
-    public void setSafeRefResolution(boolean v) { this.safeRefResolution = v; }
-    public List<String> getRemoteRefAllowList() { return remoteRefAllowList; }
-    public void setRemoteRefAllowList(List<String> v) { this.remoteRefAllowList = v; }
-    public List<String> getRemoteRefBlockList() { return remoteRefBlockList; }
-    public void setRemoteRefBlockList(List<String> v) { this.remoteRefBlockList = v; }
     public String getRefValidationTenantDomain() { return refValidationTenantDomain; }
     public void setRefValidationTenantDomain(String v) { this.refValidationTenantDomain = v; }
     public RefValidator getRefValidator() { return refValidator; }

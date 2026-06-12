@@ -26,77 +26,84 @@ import org.powermock.modules.junit4.PowerMockRunner;
 import org.powermock.reflect.Whitebox;
 import org.wso2.carbon.apimgt.api.model.OASParserOptions;
 
-import java.util.Arrays;
-import java.util.Collections;
-
 @RunWith(PowerMockRunner.class)
 @PrepareForTest({APIUtil.class})
 public class APIUtilRefPolicyTest {
 
-    private OASParserOptions run(String mode, java.util.List<String> hosts, boolean bpna) throws Exception {
+    /**
+     * Drives {@link APIUtil#populateRefResolutionPolicy(OASParserOptions, String)} with the platform-level
+     * network-security policy toggled on/off and the tenant config stubbed out (null). Returns the populated
+     * options so callers can assert the new ref-validation wiring.
+     */
+    private OASParserOptions run(boolean platformEnabled) throws Exception {
         PowerMockito.spy(APIUtil.class);
         PowerMockito.doReturn(null).when(APIUtil.class, "getTenantConfig", org.mockito.ArgumentMatchers.anyString());
-        Whitebox.setInternalState(APIUtil.class, "networkSecurityEnabled", mode != null);
-        Whitebox.setInternalState(APIUtil.class, "networkSecurityMode", mode);
-        Whitebox.setInternalState(APIUtil.class, "networkSecurityHosts", hosts);
-        Whitebox.setInternalState(APIUtil.class, "networkSecurityBlockPrivateAccess", bpna);
+        Whitebox.setInternalState(APIUtil.class, "networkSecurityEnabled", platformEnabled);
         OASParserOptions o = new OASParserOptions();
         APIUtil.populateRefResolutionPolicy(o, "carbon.super");
         return o;
     }
 
-    @Test public void testAllow() throws Exception {
-        OASParserOptions o = run("allow", Arrays.asList("good.com"), true);
-        Assert.assertTrue(o.isSafeRefResolution());
-        Assert.assertEquals(Arrays.asList("good.com"), o.getRemoteRefAllowList());
-        Assert.assertEquals(Collections.singletonList("*"), o.getRemoteRefBlockList());
-    }
-    @Test public void testDeny() throws Exception {
-        OASParserOptions o = run("deny", Arrays.asList("bad.com"), true);
-        Assert.assertTrue(o.getRemoteRefAllowList() == null || o.getRemoteRefAllowList().isEmpty());
-        Assert.assertEquals(Arrays.asList("bad.com"), o.getRemoteRefBlockList());
-    }
-    @Test public void testAllowEmptyFailsClosed() throws Exception {
-        OASParserOptions o = run("allow", Collections.emptyList(), true);
-        Assert.assertEquals(Collections.singletonList("*"), o.getRemoteRefBlockList());
-        Assert.assertTrue(o.getRemoteRefAllowList() == null || o.getRemoteRefAllowList().isEmpty());
-    }
-    @Test public void testInactive() throws Exception {
-        Assert.assertFalse(run(null, null, false).isSafeRefResolution());
-    }
-    @Test(expected = org.wso2.carbon.apimgt.api.APIManagementException.class)
-    public void testInvalidMode() throws Exception { run("bogus", Arrays.asList("x"), true); }
-
-    @Test public void testBuildSetsHook() throws Exception {
-        PowerMockito.spy(APIUtil.class);
-        PowerMockito.doReturn(null).when(APIUtil.class, "getTenantConfig", org.mockito.ArgumentMatchers.anyString());
-        Whitebox.setInternalState(APIUtil.class, "networkSecurityEnabled", true);
-        Whitebox.setInternalState(APIUtil.class, "networkSecurityMode", "deny");
-        Whitebox.setInternalState(APIUtil.class, "networkSecurityHosts", Arrays.asList("bad.com"));
-        Whitebox.setInternalState(APIUtil.class, "networkSecurityBlockPrivateAccess", true);
-        OASParserOptions o = APIUtil.buildRefAwareOASParserOptions(new OASParserOptions(), "carbon.super");
-        Assert.assertNotNull(o.getRefValidator());
+    @Test public void testPlatformPolicyActiveSetsValidator() throws Exception {
+        OASParserOptions o = run(true);
+        Assert.assertNotNull("A platform policy must wire a ref validator", o.getRefValidator());
         Assert.assertEquals("carbon.super", o.getRefValidationTenantDomain());
     }
 
-    @Test public void testDenyThenAllowFailsClosed() throws Exception {
+    @Test public void testNoPolicyLeavesValidatorNull() throws Exception {
+        OASParserOptions o = run(false);
+        Assert.assertNull("With no active policy no ref validator must be set", o.getRefValidator());
+        Assert.assertEquals("carbon.super", o.getRefValidationTenantDomain());
+    }
+
+    @Test public void testTenantPolicyActiveSetsValidator() throws Exception {
         PowerMockito.spy(APIUtil.class);
-        Whitebox.setInternalState(APIUtil.class, "networkSecurityEnabled", true);
-        Whitebox.setInternalState(APIUtil.class, "networkSecurityMode", "deny");
-        Whitebox.setInternalState(APIUtil.class, "networkSecurityHosts", Arrays.asList("x.com"));
-        Whitebox.setInternalState(APIUtil.class, "networkSecurityBlockPrivateAccess", true);
+        Whitebox.setInternalState(APIUtil.class, "networkSecurityEnabled", false);
         org.json.simple.JSONObject tenant = new org.json.simple.JSONObject();
         org.json.simple.JSONObject ac = new org.json.simple.JSONObject();
-        ac.put("Mode", "allow");
         org.json.simple.JSONArray hosts = new org.json.simple.JSONArray();
-        hosts.add("x.com"); hosts.add("y.com");
+        hosts.add("good.com");
         ac.put("Hosts", hosts);
         tenant.put("NetworkSecurityAccessControl", ac);
         PowerMockito.doReturn(tenant).when(APIUtil.class, "getTenantConfig", org.mockito.ArgumentMatchers.anyString());
         OASParserOptions o = new OASParserOptions();
         APIUtil.populateRefResolutionPolicy(o, "carbon.super");
-        Assert.assertFalse(o.getRemoteRefAllowList().contains("x.com"));
-        Assert.assertTrue(o.getRemoteRefAllowList().contains("y.com"));
-        Assert.assertTrue(o.getRemoteRefBlockList().contains("*"));
+        Assert.assertNotNull("An active tenant policy must wire a ref validator", o.getRefValidator());
+        Assert.assertEquals("carbon.super", o.getRefValidationTenantDomain());
+    }
+
+    @Test public void testPlatformAndTenantBothActiveSetsValidator() throws Exception {
+        PowerMockito.spy(APIUtil.class);
+        Whitebox.setInternalState(APIUtil.class, "networkSecurityEnabled", true);
+        org.json.simple.JSONObject tenant = new org.json.simple.JSONObject();
+        org.json.simple.JSONObject ac = new org.json.simple.JSONObject();
+        ac.put("Mode", "allow");
+        org.json.simple.JSONArray hosts = new org.json.simple.JSONArray();
+        hosts.add("x.com");
+        ac.put("Hosts", hosts);
+        tenant.put("NetworkSecurityAccessControl", ac);
+        PowerMockito.doReturn(tenant).when(APIUtil.class, "getTenantConfig", org.mockito.ArgumentMatchers.anyString());
+        OASParserOptions o = new OASParserOptions();
+        APIUtil.populateRefResolutionPolicy(o, "tenant.com");
+        Assert.assertNotNull(o.getRefValidator());
+        Assert.assertEquals("tenant.com", o.getRefValidationTenantDomain());
+    }
+
+    @Test public void testBuildSetsHook() throws Exception {
+        PowerMockito.spy(APIUtil.class);
+        PowerMockito.doReturn(null).when(APIUtil.class, "getTenantConfig", org.mockito.ArgumentMatchers.anyString());
+        Whitebox.setInternalState(APIUtil.class, "networkSecurityEnabled", true);
+        OASParserOptions o = APIUtil.buildRefAwareOASParserOptions(new OASParserOptions(), "carbon.super");
+        Assert.assertNotNull(o.getRefValidator());
+        Assert.assertEquals("carbon.super", o.getRefValidationTenantDomain());
+    }
+
+    @Test public void testBuildWithNoPolicyLeavesValidatorNull() throws Exception {
+        PowerMockito.spy(APIUtil.class);
+        PowerMockito.doReturn(null).when(APIUtil.class, "getTenantConfig", org.mockito.ArgumentMatchers.anyString());
+        Whitebox.setInternalState(APIUtil.class, "networkSecurityEnabled", false);
+        OASParserOptions o = APIUtil.buildRefAwareOASParserOptions(new OASParserOptions(), "carbon.super");
+        Assert.assertNull(o.getRefValidator());
+        Assert.assertEquals("carbon.super", o.getRefValidationTenantDomain());
     }
 }

@@ -29,7 +29,6 @@ public class OASRefHookTest {
 
     private OASParserOptions optsBlockingLoopback() {
         OASParserOptions o = new OASParserOptions();
-        o.setSafeRefResolution(true);
         o.setRefValidationTenantDomain("carbon.super");
         o.setRefValidator((url, t) -> {
             if (url.contains("127.0.0.1")) {

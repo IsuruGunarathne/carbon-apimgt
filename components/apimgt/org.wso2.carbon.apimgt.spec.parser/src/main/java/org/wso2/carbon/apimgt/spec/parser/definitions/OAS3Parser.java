@@ -2045,10 +2045,15 @@ public class OAS3Parser extends APIDefinition {
         parserOptions.setResolve(resolve);
         if (options != null) {
             parserOptions.setExplicitStyleAndExplode(options.isExplicitStyleAndExplode());
-            if (options.isSafeRefResolution()) {
+            OASParserOptions.RefValidator refValidator = options.getRefValidator();
+            if (refValidator != null) {
+                // Inject our network-security policy as the library's per-fetch URL validator. The parser routes
+                // every external $ref fetch (top-level, direct, and transitive/nested) through this, so the policy
+                // applies uniformly. setSafelyResolveURL(true) is kept belt-and-suspenders; the patched library is
+                // also fail-closed when a custom validator is present.
+                String tenantDomain = options.getRefValidationTenantDomain();
                 parserOptions.setSafelyResolveURL(true);
-                parserOptions.setRemoteRefAllowList(options.getRemoteRefAllowList());
-                parserOptions.setRemoteRefBlockList(options.getRemoteRefBlockList());
+                parserOptions.setCustomUrlValidator(url -> refValidator.validate(url, tenantDomain));
             }
         }
         return parserOptions;
