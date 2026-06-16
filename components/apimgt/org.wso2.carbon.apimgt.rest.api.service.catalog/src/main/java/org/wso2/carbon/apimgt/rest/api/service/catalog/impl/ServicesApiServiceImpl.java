@@ -504,7 +504,8 @@ public class ServicesApiServiceImpl implements ServicesApiService {
     private APIDefinitionValidationResponse validateOpenAPIDefinition(String url, String definitionContent)
             throws APIManagementException {
         APIDefinitionValidationResponse validationResponse = new APIDefinitionValidationResponse();
-        OASParserOptions parserOptions = CommonUtil.getOasParserOptions();
+        OASParserOptions parserOptions = APIUtil.buildRefAwareOASParserOptions(CommonUtil.getOasParserOptions(),
+                RestApiCommonUtil.getLoggedInUserTenantDomain());
         if (definitionContent != null) {
             validationResponse = OASParserUtil.validateAPIDefinition(definitionContent, true, parserOptions);
         } else if (url != null) {
