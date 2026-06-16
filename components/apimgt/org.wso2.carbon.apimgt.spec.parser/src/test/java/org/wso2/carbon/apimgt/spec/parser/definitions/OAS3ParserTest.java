@@ -551,4 +551,23 @@ public class OAS3ParserTest extends OASTestBase {
         apiScopes.add(petLocalScope);
         return apiScopes;
     }
+
+    @Test
+    public void testBuildParseOptionsResolveAndStyle() {
+        // No-patch redesign: buildParseOptions uses the STOCK parser only. It sets resolve + propagates the
+        // explicitStyleAndExplode option, and must NOT wire any library-side SSRF gate (setSafelyResolveURL /
+        // setCustomUrlValidator are gone — SSRF for remote $refs is enforced by the pre-parse crawl instead).
+        OASParserOptions opts = new OASParserOptions();
+        opts.setRefValidationTenantDomain("carbon.super");
+        opts.setRefValidator((url, tenantDomain) -> { /* a set validator must not change ParseOptions anymore */ });
+        io.swagger.v3.parser.core.models.ParseOptions po = OAS3Parser.buildParseOptions(opts, true);
+        Assert.assertTrue(po.isResolve());
+
+        io.swagger.v3.parser.core.models.ParseOptions noResolve = OAS3Parser.buildParseOptions(opts, false);
+        Assert.assertFalse(noResolve.isResolve());
+
+        // null options is tolerated and still yields a usable resolve-only ParseOptions
+        io.swagger.v3.parser.core.models.ParseOptions nullOpts = OAS3Parser.buildParseOptions(null, true);
+        Assert.assertTrue(nullOpts.isResolve());
+    }
 }

@@ -1,0 +1,202 @@
+/*
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.wso2.carbon.apimgt.spec.parser.definitions;
+
+import com.sun.net.httpserver.HttpServer;
+import org.apache.http.impl.client.HttpClients;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+import org.wso2.carbon.apimgt.api.APIManagementException;
+import org.wso2.carbon.apimgt.api.model.OASParserOptions;
+
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.function.Predicate;
+
+import static org.junit.Assert.*;
+
+public class OASRefCrawlTest {
+
+    private HttpServer server;
+    private String base;                 // http://127.0.0.1:<port>
+    private final ConcurrentHashMap<String, Integer> hits = new ConcurrentHashMap<>();
+
+    @Before
+    public void start() throws IOException {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newCachedThreadPool());
+        server.start();
+        base = "http://127.0.0.1:" + server.getAddress().getPort();
+    }
+
+    @After
+    public void stop() {
+        server.stop(0);
+    }
+
+    private void serve(String path, int status, String body, String location) {
+        server.createContext(path, ex -> {
+            hits.merge(path, 1, Integer::sum);
+            if (location != null) {
+                ex.getResponseHeaders().add("Location", location);
+            }
+            byte[] b = body == null ? new byte[0] : body.getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(status, b.length == 0 ? -1 : b.length);
+            if (b.length > 0) {
+                try (OutputStream os = ex.getResponseBody()) {
+                    os.write(b);
+                }
+            }
+            ex.close();
+        });
+    }
+
+    /** Options whose validator throws UNTRUSTED_URL when allow.test(url) is false; provider returns a redirect-disabled client. */
+    private OASParserOptions opts(Predicate<String> allow) {
+        OASParserOptions o = new OASParserOptions();
+        o.setRefValidationTenantDomain("carbon.super");
+        o.setRefValidator((url, tenant) -> {
+            if (!allow.test(url)) {
+                throw new APIManagementException("blocked: " + url);
+            }
+        });
+        o.setHttpClientProvider((protocol, port) -> HttpClients.custom().disableRedirectHandling().build());
+        return o;
+    }
+
+    private String refDoc(String refUrl) {
+        return "openapi: 3.0.1\ncomponents:\n  schemas:\n    X: { $ref: '" + refUrl + "' }\n";
+    }
+
+    @Test
+    public void allowedTransitiveChainIsFetched() throws Exception {
+        serve("/a.yaml", 200, refDoc(base + "/b.yaml"), null);
+        serve("/b.yaml", 200, "openapi: 3.0.1\ncomponents: {}\n", null);
+        OASParserUtil.validateRemoteRefsRecursively(refDoc(base + "/a.yaml"), null, opts(u -> true));
+        assertEquals(Integer.valueOf(1), hits.get("/a.yaml"));
+        assertEquals(Integer.valueOf(1), hits.get("/b.yaml"));
+    }
+
+    @Test
+    public void transitiveBlockedRefThrowsAndIsNeverFetched() {
+        serve("/a.yaml", 200, refDoc("http://blocked.invalid/evil.yaml"), null);
+        try {
+            OASParserUtil.validateRemoteRefsRecursively(refDoc(base + "/a.yaml"), null,
+                    opts(u -> !u.contains("blocked.invalid")));
+            fail("expected APIManagementException");
+        } catch (APIManagementException expected) {
+            // /a.yaml fetched once; the blocked host is rejected pre-fetch (never served, never hit)
+            assertEquals(Integer.valueOf(1), hits.get("/a.yaml"));
+        }
+    }
+
+    @Test
+    public void relativeRefUnderRemoteRootIsResolvedAndValidated() {
+        serve("/dir/main.yaml", 200, refDoc("./inner.yaml"), null);     // relative ref
+        serve("/dir/inner.yaml", 200, refDoc("http://blocked.invalid/x"), null);
+        try {
+            OASParserUtil.validateRemoteRefsRecursively(refDoc(base + "/dir/main.yaml"), null,
+                    opts(u -> !u.contains("blocked.invalid")));
+            fail("expected block on transitive ref reached via a relative ref");
+        } catch (APIManagementException expected) {
+            assertEquals(Integer.valueOf(1), hits.get("/dir/main.yaml"));
+            assertEquals(Integer.valueOf(1), hits.get("/dir/inner.yaml"));
+        }
+    }
+
+    @Test
+    public void cycleTerminates() throws Exception {
+        serve("/a.yaml", 200, refDoc(base + "/b.yaml"), null);
+        serve("/b.yaml", 200, refDoc(base + "/a.yaml"), null);     // cycle
+        OASParserUtil.validateRemoteRefsRecursively(refDoc(base + "/a.yaml"), null, opts(u -> true));
+        assertEquals(Integer.valueOf(1), hits.get("/a.yaml"));
+        assertEquals(Integer.valueOf(1), hits.get("/b.yaml"));
+    }
+
+    @Test
+    public void redirectToBlockedHostIsReValidatedAndThrows() {
+        serve("/r.yaml", 302, null, "http://blocked.invalid/x.yaml");
+        try {
+            OASParserUtil.validateRemoteRefsRecursively(refDoc(base + "/r.yaml"), null,
+                    opts(u -> !u.contains("blocked.invalid")));
+            fail("expected block on redirect target");
+        } catch (APIManagementException expected) {
+            assertEquals(Integer.valueOf(1), hits.get("/r.yaml"));
+        }
+    }
+
+    @Test
+    public void caseDistinctPathsAreBothCrawled() throws Exception {
+        // /A.yaml and /a.yaml are different resources on a case-sensitive server. Dedup must NOT collapse them,
+        // otherwise a nested ref unique to the skipped document is never scanned (under-validation).
+        serve("/A.yaml", 200, "openapi: 3.0.1\ncomponents: {}\n", null);
+        serve("/a.yaml", 200, "openapi: 3.0.1\ncomponents: {}\n", null);
+        String root = "openapi: 3.0.1\ncomponents:\n  schemas:\n"
+                + "    U: { $ref: '" + base + "/A.yaml' }\n"
+                + "    L: { $ref: '" + base + "/a.yaml' }\n";
+        OASParserUtil.validateRemoteRefsRecursively(root, null, opts(u -> true));
+        assertEquals("upper-case path must be fetched", Integer.valueOf(1), hits.get("/A.yaml"));
+        assertEquals("lower-case path must be fetched", Integer.valueOf(1), hits.get("/a.yaml"));
+    }
+
+    @Test
+    public void hostIsDedupedCaseInsensitively() throws Exception {
+        // The same resource referenced via case-different HOST must be fetched only once (scheme+host is case-folded).
+        serve("/x.yaml", 200, "openapi: 3.0.1\ncomponents: {}\n", null);
+        int port = server.getAddress().getPort();
+        String root = "openapi: 3.0.1\ncomponents:\n  schemas:\n"
+                + "    A: { $ref: 'http://127.0.0.1:" + port + "/x.yaml' }\n"
+                + "    B: { $ref: 'HTTP://127.0.0.1:" + port + "/x.yaml' }\n";
+        OASParserUtil.validateRemoteRefsRecursively(root, null, opts(u -> true));
+        assertEquals("host/scheme case variants must dedup to one fetch", Integer.valueOf(1), hits.get("/x.yaml"));
+    }
+
+    @Test
+    public void tooManyRefsFailsClosed() {
+        // a fan-out wider than REF_CRAWL_MAX_REFS at depth 1
+        StringBuilder sb = new StringBuilder("openapi: 3.0.1\ncomponents:\n  schemas:\n");
+        for (int i = 0; i < 150; i++) {
+            serve("/n" + i + ".yaml", 200, "openapi: 3.0.1\ncomponents: {}\n", null);
+            sb.append("    S").append(i).append(": { $ref: '").append(base).append("/n").append(i).append(".yaml' }\n");
+        }
+        try {
+            OASParserUtil.validateRemoteRefsRecursively(sb.toString(), null, opts(u -> true));
+            fail("expected fail-closed on ref budget");
+        } catch (APIManagementException expected) {
+            // ok
+        }
+    }
+
+    @Test
+    public void redirectTargetIsDedupedAgainstDirectRef() throws Exception {
+        // /r.yaml redirects to /leaf.yaml; root also references /leaf.yaml directly. /leaf.yaml must be fetched once.
+        serve("/leaf.yaml", 200, "openapi: 3.0.1\ncomponents: {}\n", null);
+        serve("/r.yaml", 302, null, base + "/leaf.yaml");
+        String root = "openapi: 3.0.1\ncomponents:\n  schemas:\n"
+                + "    R: { $ref: '" + base + "/r.yaml' }\n"
+                + "    L: { $ref: '" + base + "/leaf.yaml' }\n";
+        OASParserUtil.validateRemoteRefsRecursively(root, null, opts(u -> true));
+        assertEquals(Integer.valueOf(1), hits.get("/r.yaml"));
+        assertEquals("redirect target must not be re-fetched as a direct ref",
+                Integer.valueOf(1), hits.get("/leaf.yaml"));
+    }
+}
