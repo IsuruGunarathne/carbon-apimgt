@@ -3243,6 +3243,11 @@ public class APIManagerConfiguration {
 
         String value = getFirstProperty(APIConstants.MEDIATION_CONFIG + "."
                 + APIConstants.ENABLE_SECURE_XML_PROCESSING);
+        // Fail safe: a missing/blank value means "secure". Only an explicit "false"
+        // disables, so a malformed or omitted config never silently turns off hardening.
+        if (value == null || value.isEmpty()) {
+            return true;
+        }
         return Boolean.parseBoolean(value);
     }
 
