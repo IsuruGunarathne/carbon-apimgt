@@ -28,6 +28,8 @@ import org.mockito.Mockito;
 import org.powermock.api.mockito.PowerMockito;
 import org.powermock.core.classloader.annotations.PrepareForTest;
 import org.powermock.modules.junit4.PowerMockRunner;
+import org.wso2.carbon.apimgt.api.APIManagementException;
+import org.wso2.carbon.apimgt.gateway.threatprotection.APIMThreatAnalyzerException;
 import org.wso2.carbon.apimgt.gateway.threatprotection.analyzer.APIMThreatAnalyzer;
 import org.wso2.carbon.apimgt.gateway.threatprotection.analyzer.XMLAnalyzer;
 import org.wso2.carbon.apimgt.gateway.threatprotection.configuration.XMLConfig;
@@ -154,5 +156,24 @@ public class XMLSchemaValidatorTest {
         assertEquals(5, testConfig.getEntityExpansionLimit());
 
         log.info("Successfully completed testConfigureSchemaPropertiesAllowsDtdAndExternalEntitiesWhenSecureProcessingDisabled test case.");
+    }
+
+    @Test
+    public void testAssertXsdUrlAllowedPassesForPermittedUrl() throws Exception {
+        RemoteUrlValidator allowAll = url -> { };
+        // No exception expected for an allow-listed http URL.
+        XMLSchemaValidator.assertXsdUrlAllowed("http://schemas.example.com/a.xsd", allowAll);
+    }
+
+    @Test(expected = APIMThreatAnalyzerException.class)
+    public void testAssertXsdUrlAllowedBlocksDeniedHost() throws Exception {
+        RemoteUrlValidator denyAll = url -> { throw new APIManagementException("blocked"); };
+        XMLSchemaValidator.assertXsdUrlAllowed("http://169.254.169.254/latest/meta-data/", denyAll);
+    }
+
+    @Test(expected = APIMThreatAnalyzerException.class)
+    public void testAssertXsdUrlAllowedBlocksNonHttpScheme() throws Exception {
+        RemoteUrlValidator allowAll = url -> { };
+        XMLSchemaValidator.assertXsdUrlAllowed("file:///etc/passwd", allowAll);
     }
 }
