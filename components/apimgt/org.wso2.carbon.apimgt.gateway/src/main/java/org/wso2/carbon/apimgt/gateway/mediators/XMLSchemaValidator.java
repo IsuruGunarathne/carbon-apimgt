@@ -45,7 +45,6 @@ import org.xml.sax.SAXException;
 
 import javax.xml.XMLConstants;
 import javax.xml.stream.XMLStreamException;
-import javax.xml.transform.Source;
 import javax.xml.transform.stream.StreamSource;
 import javax.xml.validation.Schema;
 import javax.xml.validation.SchemaFactory;
@@ -311,8 +310,15 @@ public class XMLSchemaValidator extends AbstractMediator {
 
             try {
                 schema = schemaFactory.newSchema(new URL(xsdURL));
-            } catch (XsdRefBlockedException e) {
-                throw new APIMThreatAnalyzerException(e.getMessage());
+            } catch (RuntimeException e) {
+                // A blocked nested ref surfaces as XsdRefBlockedException, but some JAXP/Xerces
+                // builds wrap a resolver-thrown RuntimeException (e.g. in XNIException). Fail closed
+                // with the "not trusted" message whenever a block is anywhere in the cause chain.
+                XsdRefBlockedException blocked = unwrapBlockedRef(e);
+                if (blocked != null) {
+                    throw new APIMThreatAnalyzerException(blocked.getMessage());
+                }
+                throw e;
             }
 
             // (C) Validate the attacker-controlled payload with NO external resolution.
@@ -322,6 +328,11 @@ public class XMLSchemaValidator extends AbstractMediator {
             validator.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
             validator.validate(new StreamSource(bufferedInputStream));
         } catch (SAXException | IOException e) {
+            // A block may also surface wrapped in a SAXException during schema build; fail closed.
+            XsdRefBlockedException blocked = unwrapBlockedRef(e);
+            if (blocked != null) {
+                throw new APIMThreatAnalyzerException(blocked.getMessage());
+            }
             throw new APIMThreatAnalyzerException("Error occurred while parsing XML payload : " + e);
         }
         return true;
@@ -346,6 +357,22 @@ public class XMLSchemaValidator extends AbstractMediator {
         } catch (APIManagementException e) {
             throw new APIMThreatAnalyzerException("The provided XSD URL is not trusted: " + xsdURL);
         }
+    }
+
+    /**
+     * Walks the cause chain (including {@code t} itself) and returns the first
+     * {@link XsdRefBlockedException}, or {@code null} if none is present. Lets the
+     * mediator fail closed even when the XML parser wraps a resolver-thrown block in
+     * another exception type. Bounded to avoid pathological cause cycles.
+     */
+    static XsdRefBlockedException unwrapBlockedRef(Throwable t) {
+        Throwable cur = t;
+        for (int depth = 0; cur != null && depth < 50; depth++, cur = cur.getCause()) {
+            if (cur instanceof XsdRefBlockedException) {
+                return (XsdRefBlockedException) cur;
+            }
+        }
+        return null;
     }
 
     /**

@@ -38,6 +38,8 @@ import org.wso2.carbon.apimgt.impl.APIManagerConfiguration;
 import org.wso2.carbon.apimgt.gateway.internal.ServiceReferenceHolder;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 
 /**
  * This is the test case for {@link XMLSchemaValidator}
@@ -175,5 +177,20 @@ public class XMLSchemaValidatorTest {
     public void testAssertXsdUrlAllowedBlocksNonHttpScheme() throws Exception {
         RemoteUrlValidator allowAll = url -> { };
         XMLSchemaValidator.assertXsdUrlAllowed("file:///etc/passwd", allowAll);
+    }
+
+    @Test
+    public void testUnwrapBlockedRefFindsDirectAndWrapped() {
+        XsdRefBlockedException blocked = new XsdRefBlockedException("not trusted");
+        assertSame(blocked, XMLSchemaValidator.unwrapBlockedRef(blocked));
+        assertSame(blocked, XMLSchemaValidator.unwrapBlockedRef(new org.xml.sax.SAXException(blocked)));
+        assertSame(blocked, XMLSchemaValidator.unwrapBlockedRef(
+                new RuntimeException(new RuntimeException(blocked))));
+    }
+
+    @Test
+    public void testUnwrapBlockedRefReturnsNullWhenNoBlockPresent() {
+        assertNull(XMLSchemaValidator.unwrapBlockedRef(new RuntimeException("genuine parse error")));
+        assertNull(XMLSchemaValidator.unwrapBlockedRef(null));
     }
 }
