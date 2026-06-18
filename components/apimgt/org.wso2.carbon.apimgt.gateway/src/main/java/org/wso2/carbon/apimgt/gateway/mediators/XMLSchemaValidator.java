@@ -53,7 +53,6 @@ import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -308,17 +307,31 @@ public class XMLSchemaValidator extends AbstractMediator {
             schemaFactory.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "http,https");
             schemaFactory.setResourceResolver(new AccessControlledXmlResolver(policy));
 
+            // Fetch the top-level XSD ourselves with redirects re-validated, then compile from the bytes.
+            // Do NOT pass the URL to newSchema(): that lets Xerces' loader follow 30x redirects to an
+            // unvalidated host (SSRF). The fetcher fails closed on a blocked URL or redirect target.
+            RedirectSafeXsdFetcher.Result topLevel;
             try {
-                schema = schemaFactory.newSchema(new URL(xsdURL));
+                topLevel = RedirectSafeXsdFetcher.fetch(xsdURL, policy);
+            } catch (XsdRefBlockedException e) {
+                throw new APIMThreatAnalyzerException(e.getMessage());
+            } catch (IOException e) {
+                throw new APIMThreatAnalyzerException("Error occurred while fetching the XSD : " + e);
+            }
+
+            try {
+                schema = schemaFactory.newSchema(
+                        new StreamSource(new ByteArrayInputStream(topLevel.body), topLevel.finalUrl));
             } catch (RuntimeException e) {
-                // A blocked nested ref surfaces as XsdRefBlockedException, but some JAXP/Xerces
-                // builds wrap a resolver-thrown RuntimeException (e.g. in XNIException). Fail closed
-                // with the "not trusted" message whenever a block is anywhere in the cause chain.
+                // A blocked nested ref surfaces as XsdRefBlockedException, but some JAXP/Xerces builds
+                // wrap a resolver-thrown RuntimeException (e.g. in XNIException). Fail closed with the
+                // "not trusted" message whenever a block is anywhere in the cause chain; otherwise fail
+                // with a clean bad-request rather than letting the RuntimeException escape mediate().
                 XsdRefBlockedException blocked = unwrapBlockedRef(e);
                 if (blocked != null) {
                     throw new APIMThreatAnalyzerException(blocked.getMessage());
                 }
-                throw e;
+                throw new APIMThreatAnalyzerException("Error occurred while building the XML schema : " + e);
             }
 
             // (C) Validate the attacker-controlled payload with NO external resolution.

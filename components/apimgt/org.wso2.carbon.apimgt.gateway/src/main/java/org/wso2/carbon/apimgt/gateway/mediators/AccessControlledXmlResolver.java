@@ -19,8 +19,11 @@ package org.wso2.carbon.apimgt.gateway.mediators;
 
 import org.w3c.dom.ls.LSInput;
 import org.w3c.dom.ls.LSResourceResolver;
-import org.wso2.carbon.apimgt.api.APIManagementException;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.Reader;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Locale;
@@ -49,19 +52,20 @@ public class AccessControlledXmlResolver implements LSResourceResolver {
             throw new XsdRefBlockedException(
                     "Blocked XSD reference with an unresolvable system id: " + systemId);
         }
-        if (!isHttpOrHttps(absoluteUrl)) {
-            throw new XsdRefBlockedException(
-                    "Blocked XSD reference with a non-HTTP(S) scheme: " + absoluteUrl);
-        }
+        // Fetch the reference ourselves with redirects re-validated, instead of returning null and letting
+        // the default loader follow 30x redirects unchecked. The fetcher does the http(s) scheme check and
+        // the per-host policy check (throwing XsdRefBlockedException -> fail closed) before any request, and
+        // re-validates every redirect Location.
+        RedirectSafeXsdFetcher.Result result;
         try {
-            validator.validate(absoluteUrl);
-        } catch (APIManagementException e) {
-            throw new XsdRefBlockedException(
-                    "Blocked XSD reference not permitted by the network access-control policy: "
-                            + absoluteUrl, e);
+            result = RedirectSafeXsdFetcher.fetch(absoluteUrl, validator);
+        } catch (IOException e) {
+            throw new XsdRefFetchException(
+                    "Error fetching XSD reference " + absoluteUrl + ": " + e.getMessage(), e);
         }
-        // Permitted: let the default resolver fetch the validated URL.
-        return null;
+        // Hand Xerces the already-retrieved bytes (systemId = the final, post-redirect URL so any further
+        // relative refs resolve against where the content actually came from).
+        return new BytesLSInput(result.body, result.finalUrl, publicId, baseURI);
     }
 
     /**
@@ -100,6 +104,99 @@ public class AccessControlledXmlResolver implements LSResourceResolver {
             return "http".equals(scheme) || "https".equals(scheme);
         } catch (URISyntaxException e) {
             return false;
+        }
+    }
+
+    /**
+     * Minimal {@link LSInput} that hands the parser the already-retrieved bytes of a nested reference,
+     * so Xerces never opens its own (redirect-following) connection for it.
+     */
+    static final class BytesLSInput implements LSInput {
+        private final byte[] bytes;
+        private String systemId;
+        private String publicId;
+        private String baseURI;
+
+        BytesLSInput(byte[] bytes, String systemId, String publicId, String baseURI) {
+            this.bytes = bytes;
+            this.systemId = systemId;
+            this.publicId = publicId;
+            this.baseURI = baseURI;
+        }
+
+        @Override
+        public InputStream getByteStream() {
+            return new ByteArrayInputStream(bytes);
+        }
+
+        @Override
+        public void setByteStream(InputStream byteStream) {
+        }
+
+        @Override
+        public Reader getCharacterStream() {
+            return null;
+        }
+
+        @Override
+        public void setCharacterStream(Reader characterStream) {
+        }
+
+        @Override
+        public String getStringData() {
+            return null;
+        }
+
+        @Override
+        public void setStringData(String stringData) {
+        }
+
+        @Override
+        public String getSystemId() {
+            return systemId;
+        }
+
+        @Override
+        public void setSystemId(String systemId) {
+            this.systemId = systemId;
+        }
+
+        @Override
+        public String getPublicId() {
+            return publicId;
+        }
+
+        @Override
+        public void setPublicId(String publicId) {
+            this.publicId = publicId;
+        }
+
+        @Override
+        public String getBaseURI() {
+            return baseURI;
+        }
+
+        @Override
+        public void setBaseURI(String baseURI) {
+            this.baseURI = baseURI;
+        }
+
+        @Override
+        public String getEncoding() {
+            return null;
+        }
+
+        @Override
+        public void setEncoding(String encoding) {
+        }
+
+        @Override
+        public boolean getCertifiedText() {
+            return false;
+        }
+
+        @Override
+        public void setCertifiedText(boolean certifiedText) {
         }
     }
 }

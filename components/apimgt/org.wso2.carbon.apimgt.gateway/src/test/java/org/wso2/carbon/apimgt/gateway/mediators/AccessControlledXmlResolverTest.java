@@ -25,16 +25,14 @@ import java.util.List;
 
 import static javax.xml.XMLConstants.W3C_XML_SCHEMA_NS_URI;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
+import static org.junit.Assert.fail;
 
+/**
+ * Unit tests for the validation/blocking logic of {@link AccessControlledXmlResolver}. The actual
+ * (redirect-safe) fetching of a permitted reference and the LSInput contract are exercised against a
+ * real HTTP server in {@link RedirectSafeXsdFetcherTest}.
+ */
 public class AccessControlledXmlResolverTest {
-
-    @Test
-    public void testReturnsNullForPermittedReference() {
-        AccessControlledXmlResolver resolver = new AccessControlledXmlResolver(url -> { });
-        assertNull(resolver.resolveResource(W3C_XML_SCHEMA_NS_URI, null, null,
-                "http://schemas.example.com/types.xsd", "http://schemas.example.com/main.xsd"));
-    }
 
     @Test(expected = XsdRefBlockedException.class)
     public void testBlocksDeniedHost() {
@@ -60,9 +58,18 @@ public class AccessControlledXmlResolverTest {
     @Test
     public void testResolvesRelativeAgainstBaseBeforeValidating() {
         List<String> validated = new ArrayList<>();
-        AccessControlledXmlResolver resolver = new AccessControlledXmlResolver(validated::add);
-        resolver.resolveResource(W3C_XML_SCHEMA_NS_URI, null, null,
-                "common/types.xsd", "http://schemas.example.com/dir/main.xsd");
+        // Record the URL the resolver validates, then block to stop before any real network fetch.
+        AccessControlledXmlResolver resolver = new AccessControlledXmlResolver(url -> {
+            validated.add(url);
+            throw new APIManagementException("stop before fetch");
+        });
+        try {
+            resolver.resolveResource(W3C_XML_SCHEMA_NS_URI, null, null,
+                    "common/types.xsd", "http://schemas.example.com/dir/main.xsd");
+            fail("expected XsdRefBlockedException");
+        } catch (XsdRefBlockedException expected) {
+            // expected — we recorded the resolved URL then blocked before fetching
+        }
         assertEquals("http://schemas.example.com/dir/common/types.xsd", validated.get(0));
     }
 }
