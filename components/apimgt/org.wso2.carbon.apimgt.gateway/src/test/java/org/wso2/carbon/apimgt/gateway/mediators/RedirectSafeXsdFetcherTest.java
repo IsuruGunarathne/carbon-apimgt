@@ -22,7 +22,10 @@ import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.wso2.carbon.apimgt.api.APIManagementException;
+import org.wso2.carbon.apimgt.gateway.threatprotection.APIMThreatAnalyzerException;
 
+import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -51,6 +54,13 @@ public class RedirectSafeXsdFetcherTest {
     private static HttpServer server;
     private static String base;
 
+    // Force the JDK's built-in SchemaFactory (the test classpath also has old standalone xerces that
+    // lacks the ACCESS_EXTERNAL_* properties). Mirrors production and XmlSchemaSsrfResolverIntegrationTest.
+    private static final String SCHEMA_FACTORY_KEY =
+            "javax.xml.validation.SchemaFactory:" + W3C_XML_SCHEMA_NS_URI;
+    private static final String JDK_SCHEMA_FACTORY =
+            "com.sun.org.apache.xerces.internal.jaxp.validation.XMLSchemaFactory";
+
     /** Paths the HTTP server actually served (thread-safe). */
     private static final List<String> hits = Collections.synchronizedList(new ArrayList<>());
 
@@ -66,8 +76,12 @@ public class RedirectSafeXsdFetcherTest {
         }
     };
 
+    /** Policy that allows everything (for the payload-cannot-fetch test). */
+    private static final RemoteUrlValidator ALLOW_ALL = url -> { };
+
     @BeforeClass
     public static void startServer() throws IOException {
+        System.setProperty(SCHEMA_FACTORY_KEY, JDK_SCHEMA_FACTORY);
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         int port = server.getAddress().getPort();
         base = "http://127.0.0.1:" + port;
@@ -101,6 +115,7 @@ public class RedirectSafeXsdFetcherTest {
         if (server != null) {
             server.stop(0);
         }
+        System.clearProperty(SCHEMA_FACTORY_KEY);
     }
 
     private static String read(RedirectSafeXsdFetcher.Result r) throws IOException {
@@ -195,5 +210,50 @@ public class RedirectSafeXsdFetcherTest {
         }
         assertEquals(base + "/allowed.xsd", input.getSystemId());
         assertTrue(hits.contains("/allowed.xsd"));
+    }
+
+    // ---- validateSchema A/B/C flow: XMLSchemaValidator.validateXsdAndPayload ----------------------
+
+    private static BufferedInputStream payload(String xml) {
+        return new BufferedInputStream(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    @Test
+    public void testValidateXsdAndPayloadRefusesRedirectToBlocked() {
+        hits.clear();
+        try {
+            XMLSchemaValidator.validateXsdAndPayload(
+                    base + "/redirect-to-internal.xsd", BLOCK_SECRET, payload("<note>hi</note>"));
+            fail("expected APIMThreatAnalyzerException for the redirect to a blocked host");
+        } catch (APIMThreatAnalyzerException expected) {
+            // expected — the gate fetches the edge, then refuses the 302 to the blocked target
+        }
+        assertFalse("the redirect target must never be contacted via validateSchema either",
+                hits.contains("/secret.xsd"));
+    }
+
+    @Test
+    public void testValidateXsdAndPayloadAllowsCleanSchemaAndValidatesPayload() throws Exception {
+        hits.clear();
+        boolean ok = XMLSchemaValidator.validateXsdAndPayload(
+                base + "/allowed.xsd", BLOCK_SECRET, payload("<note>hi</note>"));
+        assertTrue("a permitted xsdURL with a conforming payload should validate", ok);
+        assertTrue(hits.contains("/allowed.xsd"));
+    }
+
+    @Test
+    public void testPayloadCannotFetchAnExternalDtd() {
+        hits.clear();
+        // The attacker-controlled payload declares an external DTD; step (C) disables all external
+        // resolution, so the DTD must never be fetched (regardless of whether parsing then fails).
+        String evilPayload = "<?xml version=\"1.0\"?>"
+                + "<!DOCTYPE note SYSTEM \"" + base + "/payload-evil.dtd\"><note>hi</note>";
+        try {
+            XMLSchemaValidator.validateXsdAndPayload(base + "/allowed.xsd", ALLOW_ALL, payload(evilPayload));
+        } catch (APIMThreatAnalyzerException ignored) {
+            // a parse failure is fine; the security property is only that the DTD is not fetched
+        }
+        assertFalse("the payload's external DTD must never be fetched (step C)",
+                hits.contains("/payload-evil.dtd"));
     }
 }

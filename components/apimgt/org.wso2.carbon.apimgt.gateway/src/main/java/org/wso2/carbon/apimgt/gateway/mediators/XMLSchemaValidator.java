@@ -292,7 +292,17 @@ public class XMLSchemaValidator extends AbstractMediator {
         String xsdURL = String.valueOf(messageProperty);
         String tenantDomain = GatewayUtils.getTenantDomain();
         RemoteUrlValidator policy = url -> APIUtil.validateRemoteURL(url, tenantDomain);
+        return validateXsdAndPayload(xsdURL, policy, bufferedInputStream);
+    }
 
+    /**
+     * The xsdURL gate, decoupled from the Synapse MessageContext so it is unit-testable with a mock
+     * {@link RemoteUrlValidator}: (A) validate the top-level xsdURL; (B) fetch it and every nested ref
+     * redirect-safely and compile the schema; (C) validate the payload with NO external resolution.
+     */
+    static boolean validateXsdAndPayload(String xsdURL, RemoteUrlValidator policy,
+                                         BufferedInputStream bufferedInputStream)
+            throws APIMThreatAnalyzerException {
         // (A) Gate the publisher-supplied top-level xsdURL through the network policy.
         assertXsdUrlAllowed(xsdURL, policy);
 
