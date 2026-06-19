@@ -303,12 +303,15 @@ public class XMLSchemaValidator extends AbstractMediator {
     static boolean validateXsdAndPayload(String xsdURL, RemoteUrlValidator policy,
                                          BufferedInputStream bufferedInputStream)
             throws APIMThreatAnalyzerException {
-        // (A) Gate the publisher-supplied top-level xsdURL through the network policy.
-        assertXsdUrlAllowed(xsdURL, policy);
-
         Schema schema;
-        SchemaFactory schemaFactory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        // Everything that can throw lives inside this try so the gate is total: it only ever throws
+        // APIMThreatAnalyzerException (mapped to a clean 400 by mediate()), never an unchecked exception
+        // that would escape mediate() and surface to the client as an HTTP 500 + stacktrace.
         try {
+            // (A) Gate the publisher-supplied top-level xsdURL through the network policy.
+            assertXsdUrlAllowed(xsdURL, policy);
+
+            SchemaFactory schemaFactory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
             // Hardening applied unconditionally (no longer gated on the secure-processing flag).
             schemaFactory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
             // (B) Permit only http/https at the JAXP layer and let the resolver enforce the
@@ -357,6 +360,19 @@ public class XMLSchemaValidator extends AbstractMediator {
                 throw new APIMThreatAnalyzerException(blocked.getMessage());
             }
             throw new APIMThreatAnalyzerException("Error occurred while parsing XML payload : " + e);
+        } catch (RuntimeException e) {
+            // Total fail-closed net for the gate. Covers the previously-unguarded unchecked surfaces:
+            // a non-APIManagementException RuntimeException from the policy at step (A) or during the
+            // redirect-safe fetch (e.g. a ClassCastException on a malformed tenant-conf.json
+            // NetworkSecurityAccessControl block), a SchemaFactory.newInstance IllegalArgumentException,
+            // or a parser-internal RuntimeException from the validator. A wrapped block still surfaces
+            // the "not trusted" message; everything else becomes a clean 400 instead of escaping
+            // mediate() as a 500. (java.lang.Error is intentionally NOT caught — it must propagate.)
+            XsdRefBlockedException blocked = unwrapBlockedRef(e);
+            if (blocked != null) {
+                throw new APIMThreatAnalyzerException(blocked.getMessage());
+            }
+            throw new APIMThreatAnalyzerException("Error occurred while validating against the XSD : " + e);
         }
         return true;
     }

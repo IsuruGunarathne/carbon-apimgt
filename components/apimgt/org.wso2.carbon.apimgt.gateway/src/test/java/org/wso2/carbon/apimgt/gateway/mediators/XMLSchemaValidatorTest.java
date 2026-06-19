@@ -37,6 +37,10 @@ import org.wso2.carbon.apimgt.gateway.threatprotection.utils.ThreatProtectorCons
 import org.wso2.carbon.apimgt.impl.APIManagerConfiguration;
 import org.wso2.carbon.apimgt.gateway.internal.ServiceReferenceHolder;
 
+import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
@@ -192,5 +196,17 @@ public class XMLSchemaValidatorTest {
     public void testUnwrapBlockedRefReturnsNullWhenNoBlockPresent() {
         assertNull(XMLSchemaValidator.unwrapBlockedRef(new RuntimeException("genuine parse error")));
         assertNull(XMLSchemaValidator.unwrapBlockedRef(null));
+    }
+
+    @Test(expected = APIMThreatAnalyzerException.class)
+    public void testValidateXsdAndPayloadConvertsPolicyRuntimeExceptionToFailClosed() throws Exception {
+        // The network policy throws an UNCHECKED RuntimeException (NOT APIManagementException) — exactly
+        // what APIUtil.validateRemoteURL does on a malformed tenant-conf.json NetworkSecurityAccessControl
+        // block (e.g. a ClassCastException). The gate must convert this to a fail-closed
+        // APIMThreatAnalyzerException (HTTP 400), never let it escape to mediate() as an HTTP 500.
+        RemoteUrlValidator boom = url -> { throw new IllegalStateException("malformed tenant-conf"); };
+        BufferedInputStream payload = new BufferedInputStream(
+                new ByteArrayInputStream("<note>hi</note>".getBytes(StandardCharsets.UTF_8)));
+        XMLSchemaValidator.validateXsdAndPayload("http://schemas.example.com/a.xsd", boom, payload);
     }
 }
