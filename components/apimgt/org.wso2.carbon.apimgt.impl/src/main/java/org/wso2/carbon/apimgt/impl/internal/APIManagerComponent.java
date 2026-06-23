@@ -315,6 +315,16 @@ public class APIManagerComponent {
                 log.error("Error while activating UserPostSelfRegistration handler component.", e);
             }
 
+            // Register the SSRF policy provider so upstream platform bundles (e.g. user-store config)
+            // can enforce APIUtil.validateRemoteURL without a compile dependency on apimgt.
+            try {
+                componentContext.getBundleContext().registerService(
+                        org.wso2.carbon.identity.core.security.SsrfPolicyProvider.class.getName(),
+                        new org.wso2.carbon.apimgt.impl.ssrf.SsrfPolicyProviderImpl(), null);
+            } catch (Exception e) {
+                log.error("Error while registering the SSRF policy provider service.", e);
+            }
+
             // Read the trust store
             ServerConfiguration config = CarbonUtils.getServerConfiguration();
 
