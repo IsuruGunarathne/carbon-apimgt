@@ -321,6 +321,9 @@ public class APIManagerComponent {
                 componentContext.getBundleContext().registerService(
                         org.wso2.carbon.identity.core.security.SsrfPolicyProvider.class.getName(),
                         new org.wso2.carbon.apimgt.impl.ssrf.SsrfPolicyProviderImpl(), null);
+                componentContext.getBundleContext().registerService(
+                        org.wso2.carbon.event.output.adapter.core.security.SsrfPolicyProvider.class.getName(),
+                        new org.wso2.carbon.apimgt.impl.ssrf.EventAdapterSsrfPolicyProviderImpl(), null);
             } catch (Exception e) {
                 log.error("Error while registering the SSRF policy provider service.", e);
             }
