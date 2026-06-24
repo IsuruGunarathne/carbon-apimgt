@@ -31,8 +31,10 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.http.HttpHost;
 import org.apache.http.HttpStatus;
 import org.apache.http.conn.params.ConnRoutePNames;
+import org.wso2.carbon.apimgt.api.APIManagementException;
 import org.wso2.carbon.apimgt.impl.APIConstants;
 import org.wso2.carbon.apimgt.impl.recommendationmgt.AccessTokenGenerator;
+import org.wso2.carbon.apimgt.impl.utils.APIUtil;
 import org.wso2.carbon.apimgt.output.adapter.http.internal.util.ExtendedHTTPEventAdapterConstants;
 import org.wso2.carbon.context.PrivilegedCarbonContext;
 import org.wso2.carbon.event.output.adapter.core.EventAdapterUtil;
@@ -174,6 +176,12 @@ public class ExtendedHTTPEventAdapter implements OutputEventAdapter {
     public void publish(Object message, Map<String, String> dynamicProperties) {
         //Load dynamic properties
         String url = dynamicProperties.get(ExtendedHTTPEventAdapterConstants.ADAPTER_MESSAGE_URL);
+        try {
+            APIUtil.validateRemoteURL(url, PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantDomain());
+        } catch (APIManagementException e) {
+            log.warn("SSRF: dropping http-extended event-publish to blocked URL '" + url + "': " + e.getMessage());
+            return;
+        }
         String username = dynamicProperties.get(ExtendedHTTPEventAdapterConstants.ADAPTER_USERNAME);
         String password = dynamicProperties.get(ExtendedHTTPEventAdapterConstants.ADAPTER_PASSWORD);
 
