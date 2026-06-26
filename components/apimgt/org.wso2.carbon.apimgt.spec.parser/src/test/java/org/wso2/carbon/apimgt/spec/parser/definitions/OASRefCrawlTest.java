@@ -171,19 +171,33 @@ public class OASRefCrawlTest {
     }
 
     @Test
-    public void tooManyRefsFailsClosed() {
-        // a fan-out wider than REF_CRAWL_MAX_REFS at depth 1
+    public void wideFanOutIsFullyCrawled() throws Exception {
+        // No total-ref cap (matching swagger-parser, which imposes none): a fan-out wider than the old 100-ref
+        // limit must be fully crawled, not rejected. Every distinct ref is fetched exactly once.
         StringBuilder sb = new StringBuilder("openapi: 3.0.1\ncomponents:\n  schemas:\n");
         for (int i = 0; i < 150; i++) {
             serve("/n" + i + ".yaml", 200, "openapi: 3.0.1\ncomponents: {}\n", null);
             sb.append("    S").append(i).append(": { $ref: '").append(base).append("/n").append(i).append(".yaml' }\n");
         }
-        try {
-            OASParserUtil.validateRemoteRefsRecursively(sb.toString(), null, opts(u -> true));
-            fail("expected fail-closed on ref budget");
-        } catch (APIManagementException expected) {
-            // ok
+        OASParserUtil.validateRemoteRefsRecursively(sb.toString(), null, opts(u -> true));
+        for (int i = 0; i < 150; i++) {
+            assertEquals("ref n" + i + " must be fetched (no ref-count cap)", Integer.valueOf(1),
+                    hits.get("/n" + i + ".yaml"));
         }
+    }
+
+    @Test
+    public void deepRefChainIsFullyCrawled() throws Exception {
+        // No depth cap (matching swagger-parser): a chain deeper than the old depth-10 limit must be fully followed.
+        int depth = 25;
+        for (int i = 0; i < depth; i++) {
+            serve("/c" + i + ".yaml", 200, refDoc(base + "/c" + (i + 1) + ".yaml"), null);
+        }
+        serve("/c" + depth + ".yaml", 200, "openapi: 3.0.1\ncomponents: {}\n", null);   // leaf
+        OASParserUtil.validateRemoteRefsRecursively(refDoc(base + "/c0.yaml"), null, opts(u -> true));
+        assertEquals(Integer.valueOf(1), hits.get("/c0.yaml"));
+        assertEquals("a chain deeper than the old depth-10 cap must be fully followed", Integer.valueOf(1),
+                hits.get("/c" + depth + ".yaml"));
     }
 
     @Test

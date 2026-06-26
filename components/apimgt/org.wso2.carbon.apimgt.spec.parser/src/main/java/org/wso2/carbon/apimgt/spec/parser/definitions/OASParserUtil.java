@@ -2500,23 +2500,27 @@ public class OASParserUtil {
         }
     }
 
-    private static final int REF_CRAWL_MAX_DEPTH = 10;
-    private static final int REF_CRAWL_MAX_REFS = 100;
-    private static final int REF_CRAWL_READ_TIMEOUT_MS = 10000;
-    private static final int REF_CRAWL_MAX_REDIRECTS = 5;
+    // Per-fetch HTTP timeouts and the redirect bound are aligned with swagger-parser's RemoteUrl (CONNECTION_TIMEOUT,
+    // READ_TIMEOUT, MAX_REDIRECTS), so the crawl never rejects a remote $ref the stock parser would itself fetch.
+    // There is deliberately NO depth or total-ref cap: swagger-parser imposes none (it terminates via a visited
+    // cache), so the crawl matches it and relies on the same visited-set/dedupKey to terminate cycles.
+    private static final int REF_CRAWL_CONNECT_TIMEOUT_MS = 30000;   // matches RemoteUrl.CONNECTION_TIMEOUT
+    private static final int REF_CRAWL_READ_TIMEOUT_MS = 60000;      // matches RemoteUrl.READ_TIMEOUT
+    private static final int REF_CRAWL_MAX_REDIRECTS = 5;            // matches RemoteUrl.MAX_REDIRECTS
     // Fallback per-document size cap, used only when the configured OAS import file-size limit is not carried on the
     // OASParserOptions (e.g. a unit-test or degraded path). Production fetches use options.getRefFetchMaxBytes().
     private static final int REF_CRAWL_MAX_BYTES = 10 * 1024 * 1024;   // 10 MB
 
     /**
      * Recursively validate (and, to discover nested refs, fetch) every remote {@code $ref} reachable from
-     * {@code content}. No-op when policy is inactive (no RefValidator hook set). Fail-closed: the first blocked ref,
-     * any fetch/IO error on an allowed ref, or a depth/count overflow aborts the whole crawl.
+     * {@code content}. No-op when policy is inactive (no RefValidator hook set). Fail-closed: the first blocked ref
+     * or any fetch/IO error on an allowed ref aborts the whole crawl. There is no depth or total-ref cap (matching
+     * swagger-parser); the visited-set terminates cycles.
      *
      * @param content the raw OpenAPI/Swagger definition to scan
      * @param baseUri  the base URI of {@code content} for resolving relative refs, or {@code null}
      * @param options  parser options carrying the RefValidator + HttpClientProvider hooks
-     * @throws APIManagementException UNTRUSTED_URL (HTTP 400) on a blocked ref / overflow; generic on a fetch error
+     * @throws APIManagementException UNTRUSTED_URL (HTTP 400) on a blocked ref; generic on a fetch error
      */
     public static void validateRemoteRefsRecursively(String content, String baseUri, OASParserOptions options)
             throws APIManagementException {
@@ -2525,19 +2529,18 @@ public class OASParserUtil {
         }
         Map<String, CloseableHttpClient> clients = new HashMap<>();
         try {
-            crawlRefs(content, baseUri, options, new HashSet<>(), 0, new int[] {0}, clients);
+            crawlRefs(content, baseUri, options, new HashSet<>(), clients);
         } finally {
             closeCrawlClients(clients);
         }
     }
 
     private static void crawlRefs(String content, String baseUri, OASParserOptions options,
-                                 Set<String> visited, int depth, int[] budget,
-                                 Map<String, CloseableHttpClient> clients) throws APIManagementException {
-        if (depth > REF_CRAWL_MAX_DEPTH) {
-            throw new APIManagementException("Remote $ref nesting exceeds the allowed depth",
-                    ExceptionCodes.UNTRUSTED_URL);
-        }
+                                 Set<String> visited, Map<String, CloseableHttpClient> clients)
+            throws APIManagementException {
+        // No depth or total-ref cap: swagger-parser imposes neither, so capping here would reject ref graphs the
+        // stock parser would resolve. The visited-set (keyed by dedupKey) terminates cycles, exactly as the parser's
+        // own resolution cache does.
         for (String rawRef : extractRefStrings(content)) {
             String absUrl = resolveToHttpUrl(rawRef, baseUri);
             if (absUrl == null) {
@@ -2555,13 +2558,10 @@ public class OASParserUtil {
                 // (or neither). Exercised only by unit tests that set a validator without a client provider.
                 continue;
             }
-            if (++budget[0] > REF_CRAWL_MAX_REFS) {
-                throw new APIManagementException("Too many remote $refs to resolve", ExceptionCodes.UNTRUSTED_URL);
-            }
             FetchedRef fetched = fetchRefForValidation(absUrl, options, visited, 0, clients);
             // Recurse with the FINAL (post-redirect) URL as the base so relative refs inside a redirected document
             // resolve against the document's actual location, not the pre-redirect URL.
-            crawlRefs(fetched.body, fetched.finalUrl, options, visited, depth + 1, budget, clients);
+            crawlRefs(fetched.body, fetched.finalUrl, options, visited, clients);
         }
     }
 
@@ -2594,7 +2594,7 @@ public class OASParserUtil {
             get.setConfig(RequestConfig.custom()
                     .setRedirectsEnabled(false)
                     .setSocketTimeout(REF_CRAWL_READ_TIMEOUT_MS)
-                    .setConnectTimeout(REF_CRAWL_READ_TIMEOUT_MS)
+                    .setConnectTimeout(REF_CRAWL_CONNECT_TIMEOUT_MS)
                     .build());
             // try-with-resources releases the connection on every path (3xx, non-200, 200, exception).
             try (CloseableHttpResponse response = client.execute(get)) {
@@ -2652,7 +2652,7 @@ public class OASParserUtil {
 
     /**
      * Scan EVERY bundled file under an extracted archive and crawl its remote {@code $ref}s through a shared
-     * visited-set/budget. The stock parser resolves a local {@code $ref} to <em>any</em> file path regardless of
+     * visited-set. The stock parser resolves a local {@code $ref} to <em>any</em> file path regardless of
      * extension, so a remote {@code $ref} hidden in a non-{@code .json}/{@code .yaml} file must still be validated;
      * {@code extractRefStrings} no-ops on content it cannot parse, so non-OAS files contribute nothing. No-op when
      * policy is inactive. Fail-closed.
@@ -2668,7 +2668,6 @@ public class OASParserUtil {
             return;
         }
         Set<String> visited = new HashSet<>();
-        int[] budget = new int[] {0};
         Map<String, CloseableHttpClient> clients = new HashMap<>();
         try (Stream<java.nio.file.Path> paths = Files.walk(extractRoot.toPath())) {
             for (java.nio.file.Path p : (Iterable<java.nio.file.Path>) paths::iterator) {
@@ -2679,7 +2678,7 @@ public class OASParserUtil {
                 String content = new String(Files.readAllBytes(p), StandardCharsets.UTF_8);
                 // base = null: relative refs in a local file point to other local files (already in this sweep);
                 // only absolute http(s) refs in each file are followed/recursed.
-                crawlRefs(content, null, options, visited, 0, budget, clients);
+                crawlRefs(content, null, options, visited, clients);
             }
         } catch (IOException e) {
             throw new APIManagementException("Error scanning archive for remote $refs", e);
