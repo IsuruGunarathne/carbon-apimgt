@@ -2504,7 +2504,9 @@ public class OASParserUtil {
     private static final int REF_CRAWL_MAX_REFS = 100;
     private static final int REF_CRAWL_READ_TIMEOUT_MS = 10000;
     private static final int REF_CRAWL_MAX_REDIRECTS = 5;
-    private static final int REF_CRAWL_MAX_BYTES = 10 * 1024 * 1024;   // 10 MB per fetched doc
+    // Fallback per-document size cap, used only when the configured OAS import file-size limit is not carried on the
+    // OASParserOptions (e.g. a unit-test or degraded path). Production fetches use options.getRefFetchMaxBytes().
+    private static final int REF_CRAWL_MAX_BYTES = 10 * 1024 * 1024;   // 10 MB
 
     /**
      * Recursively validate (and, to discover nested refs, fetch) every remote {@code $ref} reachable from
@@ -2609,7 +2611,7 @@ public class OASParserUtil {
                 } else if (status != 200) {
                     throw new APIManagementException("Failed to fetch $ref (HTTP " + status + "): " + url);
                 } else {
-                    body = readBodyCapped(response);
+                    body = readBodyCapped(response, options.getRefFetchMaxBytes());
                 }
             }
         } catch (IOException e) {
@@ -2625,23 +2627,26 @@ public class OASParserUtil {
         return new FetchedRef(body, url);
     }
 
-    private static String readBodyCapped(HttpResponse response) throws IOException, APIManagementException {
+    private static String readBodyCapped(HttpResponse response, long maxBytes)
+            throws IOException, APIManagementException {
         if (response.getEntity() == null) {
             return "";
         }
-        try (InputStream in = response.getEntity().getContent()) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
+        // Cap at the configured OAS import file-size limit carried on the options; REF_CRAWL_MAX_BYTES is only a
+        // fallback so a path that never populated the cap (e.g. a unit test) never hands a 0-byte limit to
+        // SizeLimitedInputStream (which would reject the first byte and over-block).
+        long limit = maxBytes > 0 ? maxBytes : REF_CRAWL_MAX_BYTES;
+        try (InputStream rawStream = response.getEntity().getContent();
+                SizeLimitedInputStream in = new SizeLimitedInputStream(rawStream, limit);
+                ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             byte[] buf = new byte[8192];
-            int total = 0;
             int n;
             while ((n = in.read(buf)) != -1) {
-                total += n;
-                if (total > REF_CRAWL_MAX_BYTES) {
-                    throw new APIManagementException("Remote $ref document exceeds the size limit");
-                }
                 out.write(buf, 0, n);
             }
             return out.toString(StandardCharsets.UTF_8.name());
+        } catch (FileSizeLimitExceededException e) {
+            throw new APIManagementException("Remote $ref document exceeds the size limit", e);
         }
     }
 

@@ -31,6 +31,7 @@ public class OASParserOptions {
     private String refValidationTenantDomain = null;
     private transient RefValidator refValidator = null;
     private transient HttpClientProvider httpClientProvider = null;
+    private long refFetchMaxBytes = 0L;
 
     /**
      * Layer-1 SSRF hook. Set by the impl layer to {@code APIUtil::validateRemoteURL} so the parser layer can run
@@ -61,6 +62,7 @@ public class OASParserOptions {
             this.refValidationTenantDomain = other.refValidationTenantDomain;
             this.refValidator = other.refValidator;
             this.httpClientProvider = other.httpClientProvider;
+            this.refFetchMaxBytes = other.refFetchMaxBytes;
         }
     }
 
@@ -122,5 +124,38 @@ public class OASParserOptions {
     public void setRefValidator(RefValidator v) { this.refValidator = v; }
     public HttpClientProvider getHttpClientProvider() { return httpClientProvider; }
     public void setHttpClientProvider(HttpClientProvider v) { this.httpClientProvider = v; }
+
+    public long getRefFetchMaxBytes() {
+        return refFetchMaxBytes;
+    }
+
+    /**
+     * Set the per-document size cap for the remote $ref crawl from the configured OAS import file-size limit (the same
+     * limit the top-level by-URL fetch uses). Parsing mirrors {@link #setYamlCodePointLimit(String)}: a
+     * null/blank/non-numeric/non-positive value leaves the cap unset (0), in which case the crawl applies its own
+     * fallback. The value is interpreted in megabytes.
+     *
+     * @param maxFileSizeMB maximum fetched-document size in megabytes as a String (e.g. "10")
+     */
+    public void setRefFetchMaxFileSize(String maxFileSizeMB) {
+        if (maxFileSizeMB == null || (maxFileSizeMB = maxFileSizeMB.trim()).isEmpty()) {
+            this.refFetchMaxBytes = 0L;
+            return;
+        }
+        double fileSizeInMB;
+        try {
+            fileSizeInMB = Double.parseDouble(maxFileSizeMB);
+        } catch (NumberFormatException e) {
+            log.error("Invalid remote $ref fetch size limit value: " + maxFileSizeMB + ". Using crawl default.");
+            this.refFetchMaxBytes = 0L;
+            return;
+        }
+        if (fileSizeInMB <= 0) {
+            this.refFetchMaxBytes = 0L;
+            return;
+        }
+        double bytes = fileSizeInMB * 1024 * 1024;
+        this.refFetchMaxBytes = bytes > Long.MAX_VALUE ? Long.MAX_VALUE : (long) bytes;
+    }
 
 }

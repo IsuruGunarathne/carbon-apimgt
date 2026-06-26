@@ -187,6 +187,34 @@ public class OASRefCrawlTest {
     }
 
     @Test
+    public void oversizedRefBodyFailsClosed() {
+        // A fetched ref whose body exceeds the configured cap must abort the crawl (fail closed), not be processed.
+        String big = "openapi: 3.0.1\ncomponents: {}\n# " + new String(new char[4000]).replace('\0', 'x') + "\n";
+        serve("/big.yaml", 200, big, null);
+        OASParserOptions o = opts(u -> true);
+        o.setRefFetchMaxFileSize("0.001");   // ~1048 bytes; the ~4 KB body exceeds it
+        try {
+            OASParserUtil.validateRemoteRefsRecursively(refDoc(base + "/big.yaml"), null, o);
+            fail("expected fail-closed on oversized ref body");
+        } catch (APIManagementException expected) {
+            assertTrue("message should explain the size limit",
+                    expected.getMessage() != null && expected.getMessage().contains("exceeds the size limit"));
+            assertEquals("oversized ref is still fetched (blocked during read, not pre-fetch)",
+                    Integer.valueOf(1), hits.get("/big.yaml"));
+        }
+    }
+
+    @Test
+    public void refBodyWithinConfiguredCapIsFetched() throws Exception {
+        // A small ref body under the configured cap is fetched and crawled normally.
+        serve("/small.yaml", 200, "openapi: 3.0.1\ncomponents: {}\n", null);
+        OASParserOptions o = opts(u -> true);
+        o.setRefFetchMaxFileSize("0.001");   // ~1048 bytes; the small body is well under it
+        OASParserUtil.validateRemoteRefsRecursively(refDoc(base + "/small.yaml"), null, o);
+        assertEquals(Integer.valueOf(1), hits.get("/small.yaml"));
+    }
+
+    @Test
     public void redirectTargetIsDedupedAgainstDirectRef() throws Exception {
         // /r.yaml redirects to /leaf.yaml; root also references /leaf.yaml directly. /leaf.yaml must be fetched once.
         serve("/leaf.yaml", 200, "openapi: 3.0.1\ncomponents: {}\n", null);

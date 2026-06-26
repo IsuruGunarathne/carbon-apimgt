@@ -12595,6 +12595,12 @@ public final class APIUtil {
         // Wire the fetch hook so the parser-layer crawl can fetch allowed remote $refs and recurse into nested ones.
         // Without this the crawl validates only direct refs and never discovers transitive/nested refs.
         opts.setHttpClientProvider(APIUtil::getCrawlHttpClient);
+        // Cap each fetched $ref document at the configured OAS import file-size limit, so nested refs are bounded by
+        // the same limit as the top-level by-URL fetch. Seeded to "10" (MB) by default.json in any assembled pack;
+        // if ever unset, the crawl falls back to its own constant.
+        opts.setRefFetchMaxFileSize(ServiceReferenceHolder.getInstance().getAPIManagerConfigurationService()
+                .getAPIManagerConfiguration()
+                .getFirstProperty(org.wso2.carbon.apimgt.api.APIConstants.API_PUBLISHER_IMPORT_OAS_FILE_SIZE_LIMIT));
     }
 
     /**
