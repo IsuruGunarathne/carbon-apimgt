@@ -354,7 +354,7 @@
         <repository>
             <id>wso2.releases</id>
             <name>WSO2 internal Repository</name>
-            <url>https://maven3.wso2.org/nexus/content/repositories/releases/</url>
+            <url>https://maven3-upgrade.wso2.org/nexus/content/repositories/releases/</url>
             <releases>
                 <enabled>true</enabled>
                 <updatePolicy>daily</updatePolicy>
@@ -365,7 +365,7 @@
         <repository>
             <id>wso2.snapshots</id>
             <name>Apache Snapshot Repository</name>
-            <url>https://maven3.wso2.org/nexus/content/repositories/snapshots/</url>
+            <url>https://maven3-upgrade.wso2.org/nexus/content/repositories/snapshots/</url>
             <snapshots>
                 <enabled>true</enabled>
                 <updatePolicy>daily</updatePolicy>
